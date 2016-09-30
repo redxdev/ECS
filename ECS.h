@@ -522,16 +522,6 @@ namespace ECS
 		}
 
 		/**
-		 * Subscribe to multiple events. Don't be afraid of the void pointer, your subscriber will still be type checked.
-		 */
-		template<typename T, typename V, typename... Types>
-		void subscribe(void* subscriber)
-		{
-			subscribe<T>(reinterpret_cast<EventSubscriber<T>*>(subscriber));
-			subscribe<V, Types...>(reinterpret_cast<EventSubscriber<V>*>(subscriber));
-		}
-
-		/**
 		 * Unsubscribe from an event.
 		 */
 		template<typename T>
