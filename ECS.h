@@ -20,6 +20,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+// TODO: Provide safe deletion of entities that may still be in use.
+//       For example, deleting an entity as the result of an event before
+//       that event has been sent to all subscribers.
+
 #pragma once
 
 #include <typeindex>
