@@ -9,6 +9,19 @@
 
 namespace ECS
 {
+	// Define what you want to pass to the tick() function by defining ECS_TICK_TYPE before including this header,
+	// or leave it as default (float).
+	// This is really messy to do but the alternative is some sort of slow custom event setup for ticks, which is silly.
+
+	// Add this before including this header if you don't want to pass anything to tick()
+	//#define ECS_TICK_TYPE_VOID
+
+	typedef float DefaultTickData;
+
+#ifndef ECS_TICK_TYPE
+#define ECS_TICK_TYPE ECS::DefaultTickData
+#endif
+
 	namespace Internal
 	{
 		struct BaseComponentContainer
@@ -21,6 +34,13 @@ namespace ECS
 			ComponentContainer() {}
 
 			T data;
+		};
+
+
+		class BaseEventSubscriber
+		{
+		public:
+			virtual ~BaseEventSubscriber() {};
 		};
 	}
 
@@ -156,11 +176,48 @@ namespace ECS
 		{
 		}
 
-		virtual void tick(class World* world, float deltaTime)
+		virtual void unconfigure(class World* world)
+		{
+		}
+
+#ifdef ECS_TICK_TYPE_VOID
+		virtual void tick(class World* world)
+#else
+		virtual void tick(class World* world, ECS_TICK_TYPE data)
+#endif
 		{
 		}
 	};
 
+	template<typename T>
+	class EventSubscriber : public Internal::BaseEventSubscriber
+	{
+	public:
+		virtual ~EventSubscriber() {}
+
+		virtual void receive(const T& event) = 0;
+	};
+
+	namespace Events
+	{
+		// Called when a new entity is created.
+		struct OnEntityCreated
+		{
+			Entity* entity;
+		};
+
+		// Called when an entity is about to be destroyed. This is not called when the world is destroyed.
+		struct OnEntityDestroyed
+		{
+			Entity* entity;
+		};
+	}
+
+	/**
+	 * The world creates, destroys, and manages entities. The lifetime of entities and _registered_ systems are handled by the world
+	 * (don't delete a system without unregistering it from the world first!), while event subscribers have their own lifetimes
+	 * (the world doesn't delete them automatically when the world is deleted).
+	 */
 	class World
 	{
 	public:
@@ -181,6 +238,9 @@ namespace ECS
 		{
 			Entity* ent = new Entity(this);
 			entities.push_back(ent);
+
+			emit<Events::OnEntityCreated>({ ent });
+
 			return ent;
 		}
 
@@ -190,6 +250,9 @@ namespace ECS
 				return;
 
 			entities.erase(std::remove(entities.begin(), entities.end(), ent), entities.end());
+
+			emit<Events::OnEntityDestroyed>({ ent });
+
 			delete ent;
 		}
 
@@ -202,6 +265,56 @@ namespace ECS
 		void unregisterSystem(EntitySystem* system)
 		{
 			systems.erase(std::remove(systems.begin(), systems.end(), system), systems.end());
+			system->unconfigure(this);
+		}
+
+		template<typename T>
+		void subscribe(EventSubscriber<T>* subscriber)
+		{
+			auto found = subscribers.find(std::type_index(typeid(T)));
+			if (found == subscribers.end())
+			{
+				std::vector<Internal::BaseEventSubscriber*> subList;
+				subList.push_back(subscriber);
+
+				subscribers.insert({ std::type_index(typeid(T)), subList });
+			}
+			else
+			{
+				found->second.push_back(subscriber);
+			}
+		}
+
+		template<typename T>
+		void unsubscribe(EventSubscriber<T>* subscriber)
+		{
+			auto found = subscribers.find(std::type_index(typeid(T)));
+			if (found != subscribers.end())
+			{
+				found->second.erase(std::remove(found->second.begin(), found->second.end(), subscriber), found->second.end());
+			}
+		}
+
+		void unsubscribeAll(Internal::BaseEventSubscriber* subscriber)
+		{
+			for (auto kv : subscribers)
+			{
+				kv.second.erase(std::remove(kv.second.begin(), kv.second.end(), subscriber), kv.second.end());
+			}
+		}
+
+		template<typename T>
+		void emit(const T& event)
+		{
+			auto found = subscribers.find(std::type_index(typeid(T)));
+			if (found != subscribers.end())
+			{
+				for (auto* base : found->second)
+				{
+					auto* sub = reinterpret_cast<EventSubscriber<T>*>(base);
+					sub->receive(event);
+				}
+			}
 		}
 
 		template<typename... Types>
@@ -221,16 +334,25 @@ namespace ECS
 			return entities;
 		}
 
-		void tick(float deltaTime)
+#ifdef ECS_TICK_TYPE_VOID
+		void tick()
+#else
+		void tick(ECS_TICK_TYPE data)
+#endif
 		{
 			for (auto* system : systems)
 			{
-				system->tick(this, deltaTime);
+#ifdef ECS_TICK_TYPE_VOID
+				system->tick(this);
+#else
+				system->tick(this, data);
+#endif
 			}
 		}
 
 	private:
 		std::vector<Entity*> entities;
 		std::vector<EntitySystem*> systems;
+		std::unordered_map<std::type_index, std::vector<Internal::BaseEventSubscriber*>> subscribers;
 	};
 }

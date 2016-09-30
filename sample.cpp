@@ -21,17 +21,27 @@ struct Rotation
 	float angle;
 };
 
-class TestSystem : public EntitySystem
+class TestSystem : public EntitySystem, public EventSubscriber<Events::OnEntityCreated>
 {
 	virtual ~TestSystem() {}
 
-	virtual void tick(class World* world, float deltaTime)
+	virtual void configure(class World* world) override
+	{
+		world->subscribe<Events::OnEntityCreated>(this);
+	}
+
+	virtual void tick(class World* world, float deltaTime) override
 	{
 		world->each<Position, Rotation>([&](Entity* ent, auto pos, auto rot) {
 			pos->x += deltaTime;
 			pos->y += deltaTime;
 			rot->angle += deltaTime * 2;
 		});
+	}
+
+	virtual void receive(const Events::OnEntityCreated& event) override
+	{
+		std::cout << "An entity was created!" << std::endl;
 	}
 };
 
