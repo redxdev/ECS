@@ -76,6 +76,11 @@ namespace ECS
 	class ComponentHandle
 	{
 	public:
+		ComponentHandle()
+			: component(nullptr)
+		{
+		}
+
 		ComponentHandle(T* component)
 			: component(component)
 		{
