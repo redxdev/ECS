@@ -527,9 +527,9 @@ namespace ECS
 		}
 
 		/**
-		 * Unsubscribe from all events. Don't be afraid of the Internal::BaseEventSubscriber*, just pass in your subscriber as normal.
+		 * Unsubscribe from all events. Don't be afraid of the void pointer, just pass in your subscriber as normal.
 		 */
-		void unsubscribeAll(Internal::BaseEventSubscriber* subscriber)
+		void unsubscribeAll(void* subscriber)
 		{
 			for (auto kv : subscribers)
 			{
