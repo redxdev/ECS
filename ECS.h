@@ -160,9 +160,7 @@ namespace ECS
 		template<typename T, typename V, typename... Types>
 		bool has() const
 		{
-			bool hasT = components.find(std::type_index(typeid(T))) != components.end();
-
-			return hasT && has<V, Types...>();
+			return has<T>() && has<V, Types...>();
 		}
 
 		/**
@@ -521,6 +519,16 @@ namespace ECS
 			{
 				found->second.push_back(subscriber);
 			}
+		}
+
+		/**
+		 * Subscribe to multiple events. Don't be afraid of the void pointer, your subscriber will still be type checked.
+		 */
+		template<typename T, typename V, typename... Types>
+		void subscribe(void* subscriber)
+		{
+			subscribe<T>(reinterpret_cast<EventSubscriber<T>*>(subscriber));
+			subscribe<V, Types...>(reinterpret_cast<EventSubscriber<V>*>(subscriber));
 		}
 
 		/**
