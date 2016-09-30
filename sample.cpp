@@ -58,6 +58,11 @@ public:
 		world->subscribe<Events::OnEntityCreated>(this);
 	}
 
+	virtual void unconfigure(class World* world) override
+	{
+		world->unsubscribeAll(this);
+	}
+
 	virtual void tick(class World* world, float deltaTime) override
 	{
 		world->each<Position, Rotation>([&](Entity* ent, auto pos, auto rot) {
