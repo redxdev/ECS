@@ -91,6 +91,11 @@ namespace ECS
 			return component;
 		}
 
+		operator bool() const
+		{
+			return isValid();
+		}
+
 		T& get()
 		{
 			return *component;

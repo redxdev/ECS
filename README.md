@@ -79,7 +79,7 @@ similar result:
 	}
 
 Alternatively, you may retrieve a single component at a time with `Entity::get`, though this will return an invalid component
-handle (see `ComponentHandle<T>::isValid`) if there isn't a component of that type attached:
+handle (see `ComponentHandle<T>::isValid` and `ComponentHandle<T>::operator bool()`) if there isn't a component of that type attached:
 
     ComponentHandle<Position> position = ent->get<Position>();
 	position->y += gravityAmount * deltaTime; // this will crash if there is no position component on the entity
@@ -115,6 +115,17 @@ component handle:
 
     ComponentHandle<Position> pos = otherEnt->get<Position>(); // assume otherEnt doesn't have a Position component
     pos.isValid(); // returns false, note the . instead of the ->
+
+Alternatively, you may use a handle's bool conversion operator instead of `isValid`:
+
+    if (pos)
+	{
+	    // pos is valid
+	}
+	else
+	{
+	    // pos is not valid
+	}
 
 ### Events
 
