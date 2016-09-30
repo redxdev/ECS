@@ -15,7 +15,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Entity.h">
+    <ClInclude Include="ECS.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

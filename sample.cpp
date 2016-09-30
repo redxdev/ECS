@@ -22,7 +22,7 @@ SOFTWARE.
 
 #include <iostream>
 
-#include "Entity.h"
+#include "ECS.h"
 
 using namespace ECS;
 
