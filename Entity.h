@@ -22,6 +22,7 @@ namespace ECS
 #define ECS_TICK_TYPE ECS::DefaultTickData
 #endif
 
+	// Do not use anything in the Internal namespace yourself.
 	namespace Internal
 	{
 		struct BaseComponentContainer
@@ -44,6 +45,10 @@ namespace ECS
 		};
 	}
 
+	/**
+	 * Think of this as a pointer to a component. Whenever you get a component from the world or an entity,
+	 * it'll be wrapped in a ComponentHandle.
+	 */
 	template<typename T>
 	class ComponentHandle
 	{
@@ -72,14 +77,22 @@ namespace ECS
 		T* component;
 	};
 
+	/**
+	 * A container for components. Entities do not have any logic of their own, except of that which to manage
+	 * components. Components themselves are generally structs that contain data with which EntitySystems can
+	 * act upon, but technically any data type may be used as a component, though only one of each data type
+	 * may be on a single Entity at a time.
+	 */
 	class Entity
 	{
 	public:
+		// Do not create entities yourself, use World::create().
 		Entity(class World* world)
 			: world(world)
 		{
 		}
 
+		// Do not delete entities yourself, use World::destroy().
 		~Entity()
 		{
 			for (auto kv : components)
@@ -88,12 +101,17 @@ namespace ECS
 			}
 		}
 
+		/**
+		 * Get the world associated with this entity.
+		 */
 		class World* getWorld() const
 		{
 			return world;
 		}
 
-		// Does this entity have a component?
+		/**
+		 * Does this entity have a component?
+		 */
 		template<typename T>
 		bool has() const
 		{
@@ -101,8 +119,10 @@ namespace ECS
 			return components.find(index) != components.end();
 		}
 
-		// Does this entity have these components?
-		template<typename T, typename V, typename... Types> // whyyyyyyy
+		/**
+		 * Does this entity have this list of components? The order of components does not matter.
+		 */
+		template<typename T, typename V, typename... Types>
 		bool has() const
 		{
 			bool hasT = components.find(std::type_index(typeid(T))) != components.end();
@@ -110,7 +130,13 @@ namespace ECS
 			return hasT && has<V, Types...>();
 		}
 
-		// Assign a new component (or replace an old one)
+		/**
+		 * Assign a new component (or replace an old one). All components must have a default constructor, though they
+		 * may have additional constructors. You may pass arguments to this function the same way you would to a constructor.
+		 *
+		 * It is recommended that components be simple types (not const, not references, not pointers). If you need to store
+		 * any of the above, wrap it in a struct.
+		 */
 		template<typename T, typename... Args>
 		ComponentHandle<T> assign(Args... args)
 		{
@@ -120,7 +146,9 @@ namespace ECS
 				Internal::ComponentContainer<T>* container = reinterpret_cast<Internal::ComponentContainer<T>*>(found->second);
 				container->data = T(args...);
 
-				return ComponentHandle<T>(&container->data);
+				auto handle = ComponentHandle<T>(&container->data);
+				world->emit<Events::OnComponentAssigned<T>>({ this, handle });
+				return handle;
 			}
 			else
 			{
@@ -128,16 +156,32 @@ namespace ECS
 				container->data = T(args...);
 				components.insert({ std::type_index(typeid(T)), container });
 
-				return ComponentHandle<T>(&container->data);
+				auto handle = ComponentHandle<T>(&container->data);
+				world->emit<Events::OnComponentAssigned<T>>({ this, handle });
+				return handle;
 			}
 		}
 
+		/**
+		 * Remove a component of a specific type.
+		 */
 		template<typename T>
 		bool remove()
 		{
 			return components.erase(std::type_index(typeid(T))) > 0;
 		}
 
+		/**
+		 * Remove all components from this entity.
+		 */
+		void removeAll()
+		{
+			components.clear();
+		}
+
+		/**
+		 * Get a component from this entity.
+		 */
 		template<typename T>
 		ComponentHandle<T> get()
 		{
@@ -152,6 +196,10 @@ namespace ECS
 			}
 		}
 
+		/**
+		 * Call a function with components from this entity as arguments. This will return true if this entity has
+		 * all specified components attached, and false if otherwise.
+		 */
 		template<typename... Types>
 		bool with(std::function<void(ComponentHandle<Types>...)> view)
 		{
@@ -167,19 +215,35 @@ namespace ECS
 		World* world;
 	};
 
+	/**
+	 * A system that acts on entities. Generally, this will act on a subset of entities using World::each().
+	 *
+	 * Systems often will respond to events by subclassing EventSubscriber. You may use configure() to subscribe to events,
+	 * but remember to unsubscribe in unconfigure().
+	 */
 	class EntitySystem
 	{
 	public:
 		virtual ~EntitySystem() {}
 
+		/**
+		 * Called when this system is added to a world.
+		 */
 		virtual void configure(class World* world)
 		{
 		}
 
+		/**
+		 * Called when this system is being removed from a world.
+		 */
 		virtual void unconfigure(class World* world)
 		{
 		}
 
+		/**
+		 * Called when World::tick() is called. See ECS_TICK_TYPE at the top of this file for more
+		 * information about passing data to tick.
+		 */
 #ifdef ECS_TICK_TYPE_VOID
 		virtual void tick(class World* world)
 #else
@@ -189,13 +253,20 @@ namespace ECS
 		}
 	};
 
+	/**
+	 * Subclass this as EventSubscriber<EventType> and then call World::subscribe() in order to subscribe to events. Make sure
+	 * to call World::unsubscribe() or World::unsubscribeAll() when your subscriber is deleted!
+	 */
 	template<typename T>
 	class EventSubscriber : public Internal::BaseEventSubscriber
 	{
 	public:
 		virtual ~EventSubscriber() {}
 
-		virtual void receive(const T& event) = 0;
+		/**
+		 * Called when an event is emitted by the world.
+		 */
+		virtual void receive(class World* world, const T& event) = 0;
 	};
 
 	namespace Events
@@ -206,10 +277,18 @@ namespace ECS
 			Entity* entity;
 		};
 
-		// Called when an entity is about to be destroyed. This is not called when the world is destroyed.
+		// Called when an entity is about to be destroyed.
 		struct OnEntityDestroyed
 		{
 			Entity* entity;
+		};
+
+		// Called when a component is assigned (not necessarily created).
+		template<typename T>
+		struct OnComponentAssigned
+		{
+			Entity* entity;
+			ComponentHandle<T> component;
 		};
 	}
 
@@ -221,19 +300,27 @@ namespace ECS
 	class World
 	{
 	public:
+		/**
+		 * Destroying the world will emit OnEntityDestroyed events and call EntitySystem::unconfigure() as appropriate.
+		 */
 		~World()
 		{
 			for (auto* ent : entities)
 			{
+				emit<Events::OnEntityDestroyed>({ ent });
 				delete ent;
 			}
 
 			for (auto* system : systems)
 			{
+				system->unconfigure(this);
 				delete system;
 			}
 		}
 
+		/**
+		 * Create a new entity. This will emit the OnEntityCreated event.
+		 */
 		Entity* create()
 		{
 			Entity* ent = new Entity(this);
@@ -244,6 +331,9 @@ namespace ECS
 			return ent;
 		}
 
+		/**
+		 * Destroy an entity. This will emit the OnEntityDestroy event.
+		 */
 		void destroy(Entity* ent)
 		{
 			if (ent == nullptr)
@@ -256,18 +346,27 @@ namespace ECS
 			delete ent;
 		}
 
+		/**
+		 * Register a system. The world will manage the memory of the system unless you unregister the system.
+		 */
 		void registerSystem(EntitySystem* system)
 		{
 			systems.push_back(system);
 			system->configure(this);
 		}
 
+		/**
+		 * Unregister a system.
+		 */
 		void unregisterSystem(EntitySystem* system)
 		{
 			systems.erase(std::remove(systems.begin(), systems.end(), system), systems.end());
 			system->unconfigure(this);
 		}
 
+		/**
+		 * Subscribe to an event.
+		 */
 		template<typename T>
 		void subscribe(EventSubscriber<T>* subscriber)
 		{
@@ -285,6 +384,9 @@ namespace ECS
 			}
 		}
 
+		/**
+		 * Unsubscribe from an event.
+		 */
 		template<typename T>
 		void unsubscribe(EventSubscriber<T>* subscriber)
 		{
@@ -295,6 +397,9 @@ namespace ECS
 			}
 		}
 
+		/**
+		 * Unsubscribe from all events. Don't be afraid of the Internal::BaseEventSubscriber*, just pass in your subscriber as normal.
+		 */
 		void unsubscribeAll(Internal::BaseEventSubscriber* subscriber)
 		{
 			for (auto kv : subscribers)
@@ -303,6 +408,9 @@ namespace ECS
 			}
 		}
 
+		/**
+		 * Emit an event. This will do nothing if there are no subscribers for the event type.
+		 */
 		template<typename T>
 		void emit(const T& event)
 		{
@@ -312,11 +420,14 @@ namespace ECS
 				for (auto* base : found->second)
 				{
 					auto* sub = reinterpret_cast<EventSubscriber<T>*>(base);
-					sub->receive(event);
+					sub->receive(this, event);
 				}
 			}
 		}
 
+		/**
+		 * Run a function on each entity with a specific set of components. This is useful for implementing an EntitySystem.
+		 */
 		template<typename... Types>
 		void each(std::function<void(Entity*, ComponentHandle<Types>...)> view)
 		{
@@ -329,11 +440,18 @@ namespace ECS
 			}
 		}
 
+		/**
+		 * Get the list of entities.
+		 */
 		const std::vector<Entity*> getEntities() const
 		{
 			return entities;
 		}
 
+		/**
+		 * Tick the world. See the definition for ECS_TICK_TYPE at the top of this file for more information on
+		 * passing data through tick().
+		 */
 #ifdef ECS_TICK_TYPE_VOID
 		void tick()
 #else

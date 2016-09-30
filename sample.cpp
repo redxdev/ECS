@@ -23,6 +23,7 @@ struct Rotation
 
 class TestSystem : public EntitySystem, public EventSubscriber<Events::OnEntityCreated>
 {
+public:
 	virtual ~TestSystem() {}
 
 	virtual void configure(class World* world) override
@@ -39,7 +40,7 @@ class TestSystem : public EntitySystem, public EventSubscriber<Events::OnEntityC
 		});
 	}
 
-	virtual void receive(const Events::OnEntityCreated& event) override
+	virtual void receive(class World* world, const Events::OnEntityCreated& event) override
 	{
 		std::cout << "An entity was created!" << std::endl;
 	}
