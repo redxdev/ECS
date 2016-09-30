@@ -64,6 +64,29 @@ provides the `each` method, which takes a list of component types and runs a giv
 lambda) on every entity that has those components. Note that the lambda is passed a `ComponentHandle`, and not the
 component itself.
 
+#### Alternate iteration methods
+
+In addition to the lambda-based each, there's also an iterator-based each, made to be used with the range based for loop.
+Lambda-based each isn't a true loop, and as such you can't break from it. Instead, you can use a range based for loop. The
+downside is that it will not directly expose components as arguments, but you can combine it with `Entity::with` for a
+similar result:
+
+    for (Entity* ent : world->each<Position>())
+	{
+	    ent->with<Position>([&](ComponentHandle<Position> position) {
+		    position->y += gravityAmount * deltaTime;
+		});
+	}
+
+Alternatively, you may retrieve a single component at a time with `Entity::get`, though this will return an invalid component
+handle (see `ComponentHandle<T>::isValid`) if there isn't a component of that type attached:
+
+    ComponentHandle<Position> position = ent->get<Position>();
+	position->y += gravityAmount * deltaTime; // this will crash if there is no position component on the entity
+	
+`with<T>()` only runs the given function if the entity has the listed components. It also returns true if all components were
+found, or false if not all components were on the entity.
+
 ### Create the world
 
 Next, inside a `main()` function somewhere, you can add the following code to create the world, setup the system, and

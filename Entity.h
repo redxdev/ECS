@@ -6,6 +6,7 @@
 #include <functional>
 #include <vector>
 #include <algorithm>
+#include <stdint.h>
 
 namespace ECS
 {
@@ -86,9 +87,11 @@ namespace ECS
 	class Entity
 	{
 	public:
+		const static uint32_t InvalidEntityId = 0;
+
 		// Do not create entities yourself, use World::create().
-		Entity(class World* world)
-			: world(world)
+		Entity(class World* world, uint32_t id)
+			: world(world), id(id)
 		{
 		}
 
@@ -210,9 +213,19 @@ namespace ECS
 			return true;
 		}
 
+		/**
+		 * Get this entity's id. Entity ids aren't too useful at the moment, but can be used to tell the difference between entities when debugging.
+		 */
+		uint32_t getEntityId() const
+		{
+			return id;
+		}
+
 	private:
 		std::unordered_map<std::type_index, Internal::BaseComponentContainer*> components;
 		World* world;
+
+		uint32_t id;
 	};
 
 	/**
@@ -292,6 +305,84 @@ namespace ECS
 		};
 	}
 
+	namespace Internal
+	{
+		template<typename... Types>
+		class EntityIterator
+		{
+		public:
+			EntityIterator(const std::vector<Entity*>::iterator& itr, const std::vector<Entity*>::iterator& end)
+				: itr(itr), end(end)
+			{
+			}
+
+			std::vector<Entity*>::iterator& getRawIterator()
+			{
+				return itr;
+			}
+
+			Entity* operator*() const
+			{
+				return *itr;
+			}
+
+			bool operator==(const EntityIterator& other) const
+			{
+				return itr == other.itr;
+			}
+
+			bool operator!=(const EntityIterator& other) const
+			{
+				return itr != other.itr;
+			}
+
+			EntityIterator& operator++()
+			{
+				++itr;
+				while (itr != end && !(*itr)->has<Types...>())
+				{
+					++itr;
+				}
+
+				return *this;
+			}
+
+		private:
+			std::vector<Entity*>::iterator itr;
+			std::vector<Entity*>::iterator end;
+		};
+
+		template<typename... Types>
+		class EntityView
+		{
+		public:
+			EntityView(const std::vector<Entity*>::iterator& first, const std::vector<Entity*>::iterator& last)
+				: first(first), last(last)
+			{
+				while (this->first != this->last && !(*this->first)->has<Types...>())
+				{
+					++this->first;
+				}
+			}
+
+			EntityIterator<Types...> begin()
+			{
+				return EntityIterator<Types...>(first, last);
+			}
+
+			EntityIterator<Types...> end()
+			{
+				return EntityIterator<Types...>(last, last);
+			}
+
+		private:
+			std::vector<Entity*>::iterator first;
+			std::vector<Entity*>::iterator last;
+		};
+	}
+
+
+
 	/**
 	 * The world creates, destroys, and manages entities. The lifetime of entities and _registered_ systems are handled by the world
 	 * (don't delete a system without unregistering it from the world first!), while event subscribers have their own lifetimes
@@ -323,7 +414,8 @@ namespace ECS
 		 */
 		Entity* create()
 		{
-			Entity* ent = new Entity(this);
+			++lastEntityId;
+			Entity* ent = new Entity(this, lastEntityId);
 			entities.push_back(ent);
 
 			emit<Events::OnEntityCreated>({ ent });
@@ -344,6 +436,21 @@ namespace ECS
 			emit<Events::OnEntityDestroyed>({ ent });
 
 			delete ent;
+		}
+
+		/**
+		 * Reset the world, destroying all entities. Entity ids will be reset as well.
+		 */
+		void reset()
+		{
+			for (auto ent : entities)
+			{
+				emit<Events::OnEntityDestroyed>({ ent });
+				delete ent;
+			}
+
+			entities.clear();
+			lastEntityId = 0;
 		}
 
 		/**
@@ -441,11 +548,39 @@ namespace ECS
 		}
 
 		/**
+		 * Get a view for entities with a specific set of components. The list of entities is calculated on the fly, so this method itself
+		 * has little overhead. This is mostly useful with a range based for loop.
+		 */
+		template<typename... Types>
+		Internal::EntityView<Types...> each()
+		{
+			return Internal::EntityView<Types...>(entities.begin(), entities.end());
+		}
+
+		/**
 		 * Get the list of entities.
 		 */
 		const std::vector<Entity*> getEntities() const
 		{
 			return entities;
+		}
+
+		/**
+		 * Get an entity by an id. This is a slow process.
+		 */
+		Entity* getEntityById(uint32_t id) const
+		{
+			if (id == Entity::InvalidEntityId || id > lastEntityId)
+				return nullptr;
+
+			// We should likely store entities in a map of id -> entity so that this is faster.
+			for (auto ent : entities)
+			{
+				if (ent->getEntityId() == id)
+					return ent;
+			}
+
+			return nullptr;
 		}
 
 		/**
@@ -472,5 +607,7 @@ namespace ECS
 		std::vector<Entity*> entities;
 		std::vector<EntitySystem*> systems;
 		std::unordered_map<std::type_index, std::vector<Internal::BaseEventSubscriber*>> subscribers;
+
+		uint32_t lastEntityId = 0;
 	};
 }

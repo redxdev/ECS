@@ -21,6 +21,11 @@ struct Rotation
 	float angle;
 };
 
+struct SomeComponent
+{
+	SomeComponent() {}
+};
+
 class TestSystem : public EntitySystem, public EventSubscriber<Events::OnEntityCreated>
 {
 public:
@@ -64,6 +69,24 @@ int main(int argc, char** argv)
 	world.tick(10.f);
 
 	std::cout << "After tick(10): position(" << pos->x << ", " << pos->y << "), rotation(" << rot->angle << ")" << std::endl;
+
+	std::cout << "Creating more entities..." << std::endl;
+
+	for (int i = 0; i < 10; ++i)
+	{
+		ent = world.create();
+		ent->assign<SomeComponent>();
+	}
+
+	int count = 0;
+	std::cout << "Counting entities with SomeComponent..." << std::endl;
+	// range based for loop
+	for (auto ent : world.each<SomeComponent>())
+	{
+		++count;
+		std::cout << "Found entity #" << ent->getEntityId() << std::endl;
+	}
+	std::cout << count << " entities have SomeComponent!" << std::endl;
 
 	std::cout << "Press any key to exit..." << std::endl;
 	std::getchar();
