@@ -87,6 +87,15 @@ handle (see `ComponentHandle<T>::isValid` and `ComponentHandle<T>::operator bool
 `with<T>()` only runs the given function if the entity has the listed components. It also returns true if all components were
 found, or false if not all components were on the entity.
 
+Finally, if you want to run a function on all entities, regardless of components, then use the `all` function in the same way
+as `each`:
+
+    world->all([](Entity* ent) {
+		// do something with ent
+	});
+
+There is no direct equivalent to `all` for a range based for loop. You may, however, use `getEntities()` instead.
+
 ### Create the world
 
 Next, inside a `main()` function somewhere, you can add the following code to create the world, setup the system, and

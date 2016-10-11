@@ -20,9 +20,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-// TODO: Provide safe deletion of entities that may still be in use.
-//       For example, deleting an entity as the result of an event before
-//       that event has been sent to all subscribers.
+// TODO: Make it safe to destroy entities during an each/all.
 
 #pragma once
 
@@ -34,20 +32,31 @@ SOFTWARE.
 #include <algorithm>
 #include <stdint.h>
 
-namespace ECS
-{
-	// Define what you want to pass to the tick() function by defining ECS_TICK_TYPE before including this header,
-	// or leave it as default (float).
-	// This is really messy to do but the alternative is some sort of slow custom event setup for ticks, which is silly.
+//////////////////////////////////////////////////////////////////////////
+// SETTINGS //
+//////////////////////////////////////////////////////////////////////////
 
-	// Add this before including this header if you don't want to pass anything to tick()
-	//#define ECS_TICK_TYPE_VOID
 
-	typedef float DefaultTickData;
+// Define what you want to pass to the tick() function by defining ECS_TICK_TYPE before including this header,
+// or leave it as default (float).
+// This is really messy to do but the alternative is some sort of slow custom event setup for ticks, which is silly.
 
+// Add this before including this header if you don't want to pass anything to tick()
+//#define ECS_TICK_TYPE_VOID
 #ifndef ECS_TICK_TYPE
 #define ECS_TICK_TYPE ECS::DefaultTickData
 #endif
+
+// Define ECS_TICK_NO_CLEANUP if you don't want the world to automatically cleanup dead entities
+// at the beginning of each tick. This will require you to call cleanup() manually to prevent memory
+// leaks.
+//#define ECS_TICK_NO_CLEANUP
+
+
+namespace ECS
+{
+
+	typedef float DefaultTickData;
 
 	// Do not use anything in the Internal namespace yourself.
 	namespace Internal
@@ -415,8 +424,6 @@ namespace ECS
 		};
 	}
 
-
-
 	/**
 	 * The world creates, destroys, and manages entities. The lifetime of entities and _registered_ systems are handled by the world
 	 * (don't delete a system without unregistering it from the world first!), while event subscribers have their own lifetimes
@@ -459,17 +466,64 @@ namespace ECS
 
 		/**
 		 * Destroy an entity. This will emit the OnEntityDestroy event.
+		 *
+		 * If immediate is false (recommended), then the entity won't be immediately
+		 * deleted but instead will be removed at the beginning of the next tick() or
+		 * when cleanup() is called. OnEntityDestroyed will still be called immediately.
+		 *
+		 * This function is safe to call multiple times on a single entity. Note that calling
+		 * this once with immediate = false and then calling it with immediate = true will
+		 * remove the entity from the pending destroy queue and will immediately destroy it
+		 * _without_ emitting a second OnEntityDestroyed event.
 		 */
-		void destroy(Entity* ent)
+		void destroy(Entity* ent, bool immediate = false)
 		{
 			if (ent == nullptr)
 				return;
+
+			if (isPendingDestroy(ent))
+			{
+				if (immediate)
+				{
+					deadEntities.erase(std::remove(deadEntities.begin(), deadEntities.end(), ent), deadEntities.end());
+					delete ent; // OnEntityDestroyed was already emitted, just delete it.
+				}
+				
+				return;
+			}
 
 			entities.erase(std::remove(entities.begin(), entities.end(), ent), entities.end());
 
 			emit<Events::OnEntityDestroyed>({ ent });
 
-			delete ent;
+			if (!immediate)
+			{
+				deadEntities.push_back(ent);
+			}
+
+			if (immediate)
+			{
+				delete ent;
+			}
+		}
+
+		/**
+		 * Delete all entities in the pending destroy queue. Returns true if any entities were cleaned up,
+		 * false if there were no entities to clean up.
+		 */
+		bool cleanup()
+		{
+			if (deadEntities.empty())
+				return false;
+
+			for (auto* ent : deadEntities)
+			{
+				delete ent;
+			}
+
+			deadEntities.clear();
+
+			return true;
 		}
 
 		/**
@@ -535,6 +589,10 @@ namespace ECS
 			if (found != subscribers.end())
 			{
 				found->second.erase(std::remove(found->second.begin(), found->second.end(), subscriber), found->second.end());
+				if (found->second.size() == 0)
+				{
+					subscribers.erase(found);
+				}
 			}
 		}
 
@@ -546,6 +604,10 @@ namespace ECS
 			for (auto kv : subscribers)
 			{
 				kv.second.erase(std::remove(kv.second.begin(), kv.second.end(), subscriber), kv.second.end());
+				if (kv.second.size() == 0)
+				{
+					subscribers.erase(kv.first);
+				}
 			}
 		}
 
@@ -578,6 +640,17 @@ namespace ECS
 					continue;
 
 				view(ent, ent->get<Types>()...);
+			}
+		}
+
+		/**
+		* Run a function on all entities.
+		*/
+		void all(std::function<void(Entity*)> view)
+		{
+			for (auto* ent : entities)
+			{
+				view(ent);
 			}
 		}
 
@@ -617,6 +690,11 @@ namespace ECS
 			return nullptr;
 		}
 
+		bool isPendingDestroy(Entity* ent) const
+		{
+			return std::find(deadEntities.begin(), deadEntities.end(), ent) != deadEntities.end();
+		}
+
 		/**
 		 * Tick the world. See the definition for ECS_TICK_TYPE at the top of this file for more information on
 		 * passing data through tick().
@@ -627,6 +705,10 @@ namespace ECS
 		void tick(ECS_TICK_TYPE data)
 #endif
 		{
+#ifndef ECS_TICK_NO_CLEANUP
+			cleanup();
+#endif
+
 			for (auto* system : systems)
 			{
 #ifdef ECS_TICK_TYPE_VOID
@@ -639,6 +721,7 @@ namespace ECS
 
 	private:
 		std::vector<Entity*> entities;
+		std::vector<Entity*> deadEntities; // todo: replace with unordered_set when we have a has implementation for Entity
 		std::vector<EntitySystem*> systems;
 		std::unordered_map<std::type_index, std::vector<Internal::BaseEventSubscriber*>> subscribers;
 

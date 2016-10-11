@@ -48,7 +48,14 @@ struct SomeComponent
 	SomeComponent() {}
 };
 
-class TestSystem : public EntitySystem, public EventSubscriber<Events::OnEntityCreated>
+struct SomeEvent
+{
+	int num;
+};
+
+class TestSystem : public EntitySystem,
+	public EventSubscriber<Events::OnEntityCreated>,
+	public EventSubscriber<SomeEvent>
 {
 public:
 	virtual ~TestSystem() {}
@@ -56,6 +63,7 @@ public:
 	virtual void configure(class World* world) override
 	{
 		world->subscribe<Events::OnEntityCreated>(this);
+		world->subscribe<SomeEvent>(this);
 	}
 
 	virtual void unconfigure(class World* world) override
@@ -75,6 +83,11 @@ public:
 	virtual void receive(class World* world, const Events::OnEntityCreated& event) override
 	{
 		std::cout << "An entity was created!" << std::endl;
+	}
+
+	virtual void receive(class World* world, const SomeEvent& event) override
+	{
+		std::cout << "I received SomeEvent with value " << event.num << "!" << std::endl;
 	}
 };
 
@@ -114,6 +127,9 @@ int main(int argc, char** argv)
 		std::cout << "Found entity #" << ent->getEntityId() << std::endl;
 	}
 	std::cout << count << " entities have SomeComponent!" << std::endl;
+
+	// Emitting events
+	world.emit<SomeEvent>({ 4 });
 
 	std::cout << "Press any key to exit..." << std::endl;
 	std::getchar();
