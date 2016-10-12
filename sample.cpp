@@ -88,6 +88,15 @@ public:
 	virtual void receive(class World* world, const SomeEvent& event) override
 	{
 		std::cout << "I received SomeEvent with value " << event.num << "!" << std::endl;
+
+		// Let's delete an entity while iterating because why not?
+		world->all([&](auto* ent) {
+			if (ent->getEntityId() + 1 == event.num)
+				world->destroy(world->getEntityById(event.num));
+
+			if (ent->getEntityId() == event.num)
+				std::cout << "Woah, we shouldn't get here!" << std::endl;
+		});
 	}
 };
 
@@ -130,6 +139,10 @@ int main(int argc, char** argv)
 
 	// Emitting events
 	world.emit<SomeEvent>({ 4 });
+
+	std::cout << "We have " << world.getEntities().size() << " entities right now." << std::endl;
+	world.cleanup();
+	std::cout << "After a cleanup, we have " << world.getEntities().size() << " entities." << std::endl;
 
 	std::cout << "Press any key to exit..." << std::endl;
 	std::getchar();

@@ -132,6 +132,8 @@ namespace ECS
 	class Entity
 	{
 	public:
+		friend class World;
+
 		const static uint32_t InvalidEntityId = 0;
 
 		// Do not create entities yourself, use World::create().
@@ -264,11 +266,17 @@ namespace ECS
 			return id;
 		}
 
+		bool isPendingDestroy() const
+		{
+			return bPendingDestroy;
+		}
+
 	private:
 		std::unordered_map<std::type_index, Internal::BaseComponentContainer*> components;
 		World* world;
 
 		uint32_t id;
+		bool bPendingDestroy = false;
 	};
 
 	/**
@@ -354,8 +362,8 @@ namespace ECS
 		class EntityIterator
 		{
 		public:
-			EntityIterator(const std::vector<Entity*>::iterator& itr, const std::vector<Entity*>::iterator& end)
-				: itr(itr), end(end)
+			EntityIterator(const std::vector<Entity*>::iterator& itr, const std::vector<Entity*>::iterator& end, bool bIncludePendingDestroy)
+				: itr(itr), end(end), bIncludePendingDestroy(bIncludePendingDestroy)
 			{
 			}
 
@@ -382,7 +390,7 @@ namespace ECS
 			EntityIterator& operator++()
 			{
 				++itr;
-				while (itr != end && !(*itr)->has<Types...>())
+				while (itr != end && !(*itr)->has<Types...>() && (bIncludePendingDestroy || !(*itr)->isPendingDestroy()))
 				{
 					++itr;
 				}
@@ -393,16 +401,17 @@ namespace ECS
 		private:
 			std::vector<Entity*>::iterator itr;
 			std::vector<Entity*>::iterator end;
+			bool bIncludePendingDestroy;
 		};
 
 		template<typename... Types>
 		class EntityView
 		{
 		public:
-			EntityView(const std::vector<Entity*>::iterator& first, const std::vector<Entity*>::iterator& last)
-				: first(first), last(last)
+			EntityView(const std::vector<Entity*>::iterator& first, const std::vector<Entity*>::iterator& last, bool bIncludePendingDestroy)
+				: first(first), last(last), bIncludePendingDestroy(bIncludePendingDestroy)
 			{
-				while (this->first != this->last && !(*this->first)->has<Types...>())
+				while (this->first != this->last && !(*this->first)->has<Types...>() && (bIncludePendingDestroy || !(*this->first)->isPendingDestroy()))
 				{
 					++this->first;
 				}
@@ -410,17 +419,18 @@ namespace ECS
 
 			EntityIterator<Types...> begin()
 			{
-				return EntityIterator<Types...>(first, last);
+				return EntityIterator<Types...>(first, last, bIncludePendingDestroy);
 			}
 
 			EntityIterator<Types...> end()
 			{
-				return EntityIterator<Types...>(last, last);
+				return EntityIterator<Types...>(last, last, bIncludePendingDestroy);
 			}
 
 		private:
 			std::vector<Entity*>::iterator first;
 			std::vector<Entity*>::iterator last;
+			bool bIncludePendingDestroy;
 		};
 	}
 
@@ -475,34 +485,32 @@ namespace ECS
 		 * this once with immediate = false and then calling it with immediate = true will
 		 * remove the entity from the pending destroy queue and will immediately destroy it
 		 * _without_ emitting a second OnEntityDestroyed event.
+		 *
+		 * A warning: Do not set immediate to true if you are currently iterating through entities!
 		 */
 		void destroy(Entity* ent, bool immediate = false)
 		{
 			if (ent == nullptr)
 				return;
 
-			if (isPendingDestroy(ent))
+			if (ent->isPendingDestroy())
 			{
 				if (immediate)
 				{
-					deadEntities.erase(std::remove(deadEntities.begin(), deadEntities.end(), ent), deadEntities.end());
+					entities.erase(std::remove(entities.begin(), entities.end(), ent), entities.end());
 					delete ent; // OnEntityDestroyed was already emitted, just delete it.
 				}
 				
 				return;
 			}
 
-			entities.erase(std::remove(entities.begin(), entities.end(), ent), entities.end());
+			ent->bPendingDestroy = true;
 
 			emit<Events::OnEntityDestroyed>({ ent });
 
-			if (!immediate)
-			{
-				deadEntities.push_back(ent);
-			}
-
 			if (immediate)
 			{
+				entities.erase(std::remove(entities.begin(), entities.end(), ent), entities.end());
 				delete ent;
 			}
 		}
@@ -513,15 +521,9 @@ namespace ECS
 		 */
 		bool cleanup()
 		{
-			if (deadEntities.empty())
-				return false;
-
-			for (auto* ent : deadEntities)
-			{
-				delete ent;
-			}
-
-			deadEntities.clear();
+			entities.erase(std::remove_if(entities.begin(), entities.end(), [](auto* ent) {
+				return ent->isPendingDestroy();
+			}), entities.end());
 
 			return true;
 		}
@@ -533,6 +535,7 @@ namespace ECS
 		{
 			for (auto ent : entities)
 			{
+				ent->bPendingDestroy = true;
 				emit<Events::OnEntityDestroyed>({ ent });
 				delete ent;
 			}
@@ -630,12 +633,17 @@ namespace ECS
 
 		/**
 		 * Run a function on each entity with a specific set of components. This is useful for implementing an EntitySystem.
+		 *
+		 * If you want to include entities that are pending destruction, set includePendingDestroy to true.
 		 */
 		template<typename... Types>
-		void each(std::function<void(Entity*, ComponentHandle<Types>...)> view)
+		void each(std::function<void(Entity*, ComponentHandle<Types>...)> view, bool bIncludePendingDestroy = false)
 		{
 			for (auto* ent : entities)
 			{
+				if (!bIncludePendingDestroy && ent->isPendingDestroy())
+					continue;
+
 				if (!ent->has<Types...>())
 					continue;
 
@@ -646,10 +654,13 @@ namespace ECS
 		/**
 		* Run a function on all entities.
 		*/
-		void all(std::function<void(Entity*)> view)
+		void all(std::function<void(Entity*)> view, bool bIncludePendingDestroy = false)
 		{
 			for (auto* ent : entities)
 			{
+				if (!bIncludePendingDestroy && ent->isPendingDestroy())
+					continue;
+
 				view(ent);
 			}
 		}
@@ -659,9 +670,9 @@ namespace ECS
 		 * has little overhead. This is mostly useful with a range based for loop.
 		 */
 		template<typename... Types>
-		Internal::EntityView<Types...> each()
+		Internal::EntityView<Types...> each(bool bIncludePendingDestroy = false)
 		{
-			return Internal::EntityView<Types...>(entities.begin(), entities.end());
+			return Internal::EntityView<Types...>(entities.begin(), entities.end(), bIncludePendingDestroy);
 		}
 
 		/**
@@ -690,11 +701,6 @@ namespace ECS
 			return nullptr;
 		}
 
-		bool isPendingDestroy(Entity* ent) const
-		{
-			return std::find(deadEntities.begin(), deadEntities.end(), ent) != deadEntities.end();
-		}
-
 		/**
 		 * Tick the world. See the definition for ECS_TICK_TYPE at the top of this file for more information on
 		 * passing data through tick().
@@ -721,7 +727,6 @@ namespace ECS
 
 	private:
 		std::vector<Entity*> entities;
-		std::vector<Entity*> deadEntities; // todo: replace with unordered_set when we have a has implementation for Entity
 		std::vector<EntitySystem*> systems;
 		std::unordered_map<std::type_index, std::vector<Internal::BaseEventSubscriber*>> subscribers;
 
