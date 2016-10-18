@@ -450,7 +450,11 @@ namespace ECS
 		{
 			for (auto* ent : entities)
 			{
-				emit<Events::OnEntityDestroyed>({ ent });
+				if (!ent->bPendingDestroy)
+				{
+					ent->bPendingDestroy = true;
+					emit<Events::OnEntityDestroyed>({ ent });
+				}
 				delete ent;
 			}
 
@@ -536,8 +540,11 @@ namespace ECS
 		{
 			for (auto ent : entities)
 			{
-				ent->bPendingDestroy = true;
-				emit<Events::OnEntityDestroyed>({ ent });
+				if (!ent->bPendingDestroy)
+				{
+					ent->bPendingDestroy = true;
+					emit<Events::OnEntityDestroyed>({ ent });
+				}
 				delete ent;
 			}
 

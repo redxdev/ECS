@@ -55,6 +55,7 @@ struct SomeEvent
 
 class TestSystem : public EntitySystem,
 	public EventSubscriber<Events::OnEntityCreated>,
+	public EventSubscriber<Events::OnEntityDestroyed>,
 	public EventSubscriber<SomeEvent>
 {
 public:
@@ -63,6 +64,7 @@ public:
 	virtual void configure(class World* world) override
 	{
 		world->subscribe<Events::OnEntityCreated>(this);
+		world->subscribe<Events::OnEntityDestroyed>(this);
 		world->subscribe<SomeEvent>(this);
 	}
 
@@ -83,6 +85,11 @@ public:
 	virtual void receive(class World* world, const Events::OnEntityCreated& event) override
 	{
 		std::cout << "An entity was created!" << std::endl;
+	}
+
+	virtual void receive(class World* world, const Events::OnEntityDestroyed& event) override
+	{
+		std::cout << "An entity was destroyed!" << std::endl;
 	}
 
 	virtual void receive(class World* world, const SomeEvent& event) override
