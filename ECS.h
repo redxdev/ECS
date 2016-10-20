@@ -146,10 +146,7 @@ namespace ECS
 		// Do not delete entities yourself, use World::destroy().
 		~Entity()
 		{
-			for (auto kv : components)
-			{
-				delete kv.second;
-			}
+			removeAll();
 		}
 
 		/**
@@ -225,6 +222,11 @@ namespace ECS
 		 */
 		void removeAll()
 		{
+			for (auto pair : components)
+			{
+				delete pair.second;
+			}
+
 			components.clear();
 		}
 
