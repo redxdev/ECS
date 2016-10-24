@@ -435,12 +435,216 @@ namespace ECS
 			std::vector<Entity*>::iterator last;
 			bool bIncludePendingDestroy;
 		};
+
+		/**
+		 * Templated implementation for the world. This exists so we can have a common interface to the world (ECS::World) without
+		 * having to also template entities, systems, etc. The default template uses standard allocators.
+		 */
+		template<typename Allocator = std::allocator<Entity>>
+		class WorldImpl : class ECS::World
+		{
+		public:
+			using EntityAllocator = std::allocator_traits<Allocator>::template rebind_alloc<Entity>;
+			using SystemAllocator = std::allocator_traits<Allocator>::template rebind_alloc<EntitySystem>;
+			using EntityPtrAllocator = std::allocator_traits<Allocator>::template rebind_alloc<Entity*>;
+			using SystemPtrAllocator = std::allocator_traits<Allocator>::template rebind_alloc<EntitySystem*>;
+			using SubscriberPtrAllocator = std::allocator_traits<Allocator>::template rebind_alloc<BaseEventSubscriber*>;
+			using SubscriberPairAllocator = std::allocator_traits<Allocator>::template rebind_alloc<std::pair<const std::type_index, std::vector<BaseEventSubscriber*, SubscriberPtrAllocator>>>;
+
+			WorldImpl(Allocator alloc)
+				: entAlloc(alloc), systemAlloc(alloc),
+				entities({}, EntityPtrAllocator(alloc)),
+				systems({}, SystemPtrAllocator(alloc)),
+				subscribers({}, 0, hash<std::type_index>(), std::equal_to<std::type_index>(), SubscriberPairAllocator(alloc))
+			{
+			}
+
+			virtual ~World()
+			{
+				for (auto* ent : entities)
+				{
+					if (!ent->bPendingDestroy)
+					{
+						ent->bPendingDestroy = true;
+						emit<Events::OnEntityDestroyed>({ ent });
+					}
+
+					std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
+					std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent);
+				}
+
+				for (auto* system : systems)
+				{
+					system->unconfigure(this);
+					std::allocator_traits<SystemAllocator>::destroy(system);
+					std::allocator_traits<SystemAllocator>::deallocate(system);
+				}
+			}
+
+			virtual Entity* create() override
+			{
+				++lastEntityId;
+				Entity* ent = std::allocator_traits<EntityAllocator>::allocate(entAlloc, 1);
+				std::allocator_traits<EntityAllocator>::construct(entAlloc, ent, this, lastEntityId);
+				entities.push_back(ent);
+
+				emit<Events::OnEntityCreated>({ ent });
+
+				return ent;
+			}
+
+			virtual void destroy(Entity* ent, bool immediate = false) override
+			{
+				if (ent == nullptr)
+					return;
+
+				if (ent->isPendingDestroy())
+				{
+					if (immediate)
+					{
+						entities.erase(std::remove(entities.begin(), entities.end(), ent), entities.end());
+						std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
+						std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent);
+					}
+
+					return;
+				}
+
+				ent->bPendingDestroy = true;
+
+				emit<Events::OnEntityDestroyed>({ ent });
+
+				if (immediate)
+				{
+					entities.erase(std::remove(entities.begin(), entities.end(), ent), entities.end());
+					std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
+					std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent);
+				}
+			}
+
+			virtual bool cleanup() override
+			{
+				uint32_t count = 0;
+				entities.erase(std::remove_if(entities.begin(), entities.end(), [this](auto* ent) {
+					if (ent->isPendingDestroy())
+					{
+						std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
+						std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent);
+						++count;
+					}
+
+					return false;
+				}), entities.end());
+
+				return count > 0;
+			}
+
+			virtual void reset() override
+			{
+				for (auto* ent : entities)
+				{
+					if (!ent->bPendingDestroy)
+					{
+						ent->bPendingDestroy = true;
+						emit<Events::OnEntityDestroyed>({ ent });
+					}
+					std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
+					std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent);
+				}
+
+				entities.clear();
+				lastEntityId = 0;
+			}
+
+			virtual void registerSystem(EntitySystem* system) override
+			{
+				systems.push_back(system);
+				system->configure(this);
+			}
+
+			void unregisterSystem(EntitySystem* system) override
+			{
+				systems.erase(std::remove(systems.begin(), systems.end(), system), systems.end());
+				system->unconfigure(this);
+			}
+
+			virtual void unsubscribeAll(void* subscriber) override
+			{
+				for (auto kv : subscribers)
+				{
+					kv.second.erase(std::remove(kv.second.begin(), kv.second.end(), subscriber), kv.second.end());
+					if (kv.second.size() == 0)
+					{
+						subscribers.erase(kv.first);
+					}
+				}
+			}
+
+		protected:
+			virtual void subscribe(BaseEventSubscriber* subscriber, const std::type_info& typeInfo) override
+			{
+				auto found = subscribers.find(std::type_index(typeInfo));
+				if (found == subscribers.end())
+				{
+					std::vector<BaseEventSubscriber*, SubscriberPtrAllocator> subList;
+					subList.push_back(subscriber);
+
+					subscribers.insert({ std::type_index(typeInfo), subList });
+				}
+				else
+				{
+					found->second.push_back(subscriber);
+				}
+			}
+
+			virtual void unsubscribe(Internal::BaseEventSubscriber* subscriber, const std::type_info& typeInfo) override
+			{
+				auto found = subscribers.find(std::type_index(typeInfo));
+				if (found != subscribers.end())
+				{
+					found->second.erase(std::remove(found->second.begin(), found->second.end(), subscriber), found->second.end());
+					if (found->second.size() == 0)
+					{
+						subscribers.erase(found);
+					}
+				}
+			}
+
+			virtual void emit(const std::type_info& typeInfo, std::function<void(Internal::BaseEventSubscriber*)> func) override
+			{
+				auto found = subscribers.find(std::type_index(typeInfo));
+				if (found != subscribers.end())
+				{
+					for (auto* base : found->second)
+					{
+						func(base);
+					}
+				}
+			}
+
+		private:
+			EntityAllocator entAlloc;
+			SystemAllocator systemAlloc;
+
+			std::vector<Entity*, EntityPtrAllocator> entities;
+			std::vector<EntitySystem*, SystemPtrAllocator> systems;
+			std::unordered_map<std::type_index,
+				std::vector<Internal::BaseEventSubscriber*>,
+				std::hash<std::type_index>,
+				std::equal_to<std::type_index>,
+				SubscriberPairAllocator> subscribers;
+
+			uint32_t lastEntityId = 0;
+		};
 	}
 
 	/**
 	 * The world creates, destroys, and manages entities. The lifetime of entities and _registered_ systems are handled by the world
 	 * (don't delete a system without unregistering it from the world first!), while event subscribers have their own lifetimes
 	 * (the world doesn't delete them automatically when the world is deleted).
+	 *
+	 * This is just a common interface, the actual world implementation is ECS::Internal::WorldImpl. Don't use it directly.
+	 * Create worlds using ECS::World::createWorld();
 	 */
 	class World
 	{
@@ -448,38 +652,12 @@ namespace ECS
 		/**
 		 * Destroying the world will emit OnEntityDestroyed events and call EntitySystem::unconfigure() as appropriate.
 		 */
-		~World()
-		{
-			for (auto* ent : entities)
-			{
-				if (!ent->bPendingDestroy)
-				{
-					ent->bPendingDestroy = true;
-					emit<Events::OnEntityDestroyed>({ ent });
-				}
-				delete ent;
-			}
-
-			for (auto* system : systems)
-			{
-				system->unconfigure(this);
-				delete system;
-			}
-		}
+		virtual ~World() {}
 
 		/**
 		 * Create a new entity. This will emit the OnEntityCreated event.
 		 */
-		Entity* create()
-		{
-			++lastEntityId;
-			Entity* ent = new Entity(this, lastEntityId);
-			entities.push_back(ent);
-
-			emit<Events::OnEntityCreated>({ ent });
-
-			return ent;
-		}
+		virtual Entity* create() = 0;
 
 		/**
 		 * Destroy an entity. This will emit the OnEntityDestroy event.
@@ -495,82 +673,28 @@ namespace ECS
 		 *
 		 * A warning: Do not set immediate to true if you are currently iterating through entities!
 		 */
-		void destroy(Entity* ent, bool immediate = false)
-		{
-			if (ent == nullptr)
-				return;
-
-			if (ent->isPendingDestroy())
-			{
-				if (immediate)
-				{
-					entities.erase(std::remove(entities.begin(), entities.end(), ent), entities.end());
-					delete ent; // OnEntityDestroyed was already emitted, just delete it.
-				}
-				
-				return;
-			}
-
-			ent->bPendingDestroy = true;
-
-			emit<Events::OnEntityDestroyed>({ ent });
-
-			if (immediate)
-			{
-				entities.erase(std::remove(entities.begin(), entities.end(), ent), entities.end());
-				delete ent;
-			}
-		}
+		virtual void destroy(Entity* ent, bool immediate = false) = 0;
 
 		/**
 		 * Delete all entities in the pending destroy queue. Returns true if any entities were cleaned up,
 		 * false if there were no entities to clean up.
 		 */
-		bool cleanup()
-		{
-			entities.erase(std::remove_if(entities.begin(), entities.end(), [](auto* ent) {
-				return ent->isPendingDestroy();
-			}), entities.end());
-
-			return true;
-		}
+		virtual bool cleanup() = 0;
 
 		/**
 		 * Reset the world, destroying all entities. Entity ids will be reset as well.
 		 */
-		void reset()
-		{
-			for (auto ent : entities)
-			{
-				if (!ent->bPendingDestroy)
-				{
-					ent->bPendingDestroy = true;
-					emit<Events::OnEntityDestroyed>({ ent });
-				}
-				delete ent;
-			}
-
-			entities.clear();
-			lastEntityId = 0;
-		}
+		virtual void reset() = 0;
 
 		/**
 		 * Register a system. The world will manage the memory of the system unless you unregister the system.
 		 */
-		void registerSystem(EntitySystem* system)
-		{
-			systems.push_back(system);
-			system->configure(this);
-		}
+		virtual void registerSystem(EntitySystem* system) = 0;
 
 		/**
 		 * Unregister a system.
 		 */
-		void unregisterSystem(EntitySystem* system)
-		{
-			systems.erase(std::remove(systems.begin(), systems.end(), system), systems.end());
-			system->unconfigure(this);
-		}
+		virtual void unregisterSystem(EntitySystem* system) = 0;
 
 		/**
 		 * Subscribe to an event.
@@ -578,18 +702,7 @@ namespace ECS
 		template<typename T>
 		void subscribe(EventSubscriber<T>* subscriber)
 		{
-			auto found = subscribers.find(std::type_index(typeid(T)));
-			if (found == subscribers.end())
-			{
-				std::vector<Internal::BaseEventSubscriber*> subList;
-				subList.push_back(subscriber);
-
-				subscribers.insert({ std::type_index(typeid(T)), subList });
-			}
-			else
-			{
-				found->second.push_back(subscriber);
-			}
+			subscribe(subscriber, typeid(T));
 		}
 
 		/**
@@ -598,31 +711,13 @@ namespace ECS
 		template<typename T>
 		void unsubscribe(EventSubscriber<T>* subscriber)
 		{
-			auto found = subscribers.find(std::type_index(typeid(T)));
-			if (found != subscribers.end())
-			{
-				found->second.erase(std::remove(found->second.begin(), found->second.end(), subscriber), found->second.end());
-				if (found->second.size() == 0)
-				{
-					subscribers.erase(found);
-				}
-			}
+			unsubscribe(subscriber, typeid(T));
 		}
 
 		/**
 		 * Unsubscribe from all events. Don't be afraid of the void pointer, just pass in your subscriber as normal.
 		 */
-		void unsubscribeAll(void* subscriber)
-		{
-			for (auto kv : subscribers)
-			{
-				kv.second.erase(std::remove(kv.second.begin(), kv.second.end(), subscriber), kv.second.end());
-				if (kv.second.size() == 0)
-				{
-					subscribers.erase(kv.first);
-				}
-			}
-		}
+		virtual void unsubscribeAll(void* subscriber) = 0;
 
 		/**
 		 * Emit an event. This will do nothing if there are no subscribers for the event type.
@@ -630,15 +725,10 @@ namespace ECS
 		template<typename T>
 		void emit(const T& event)
 		{
-			auto found = subscribers.find(std::type_index(typeid(T)));
-			if (found != subscribers.end())
-			{
-				for (auto* base : found->second)
-				{
-					auto* sub = reinterpret_cast<EventSubscriber<T>*>(base);
-					sub->receive(this, event);
-				}
-			}
+			emit(typeid(T), [&, this](Internal::BaseEventSubscriber* base) {
+				auto* sub = reinterpret_cast<EventSubscriber<T>*>(base);
+				sub->receive(this, event);
+			});
 		}
 
 		/**
@@ -735,11 +825,11 @@ namespace ECS
 			}
 		}
 
-	private:
-		std::vector<Entity*> entities;
-		std::vector<EntitySystem*> systems;
-		std::unordered_map<std::type_index, std::vector<Internal::BaseEventSubscriber*>> subscribers;
+	protected:
+		virtual void subscribe(Internal::BaseEventSubscriber* subscriber, const std::type_info& typeInfo) = 0;
+		virtual void unsubscribe(Internal::BaseEventSubscriber* subscriber, const std::type_info& typeInfo) = 0;
 
-		uint32_t lastEntityId = 0;
+		// This is a workaround, need to find a better way to do this later.
+		virtual void emit(const std::type_info& typeInfo, std::function<void(Internal::BaseEventSubscriber*)> func) = 0;
 	};
 }
