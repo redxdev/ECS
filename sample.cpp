@@ -99,7 +99,7 @@ public:
 		// Let's delete an entity while iterating because why not?
 		world->all([&](auto* ent) {
 			if (ent->getEntityId() + 1 == event.num)
-				world->destroy(world->getEntityById(event.num));
+				world->destroy(world->getById(event.num));
 
 			if (ent->getEntityId() == event.num)
 				std::cout << "Woah, we shouldn't get here!" << std::endl;
@@ -112,17 +112,17 @@ int main(int argc, char** argv)
 	std::cout << "EntityComponentSystem Test" << std::endl
 		<< "==========================" << std::endl;
 
-	World world;
+	World* world = World::createWorld();
 
-	world.registerSystem(new TestSystem());
+	world->registerSystem(new TestSystem());
 
-	Entity* ent = world.create();
+	Entity* ent = world->create();
 	auto pos = ent->assign<Position>(0.f, 0.f);
 	auto rot = ent->assign<Rotation>(0.f);
 
 	std::cout << "Initial values: position(" << pos->x << ", " << pos->y << "), rotation(" << rot->angle << ")" << std::endl;
 
-	world.tick(10.f);
+	world->tick(10.f);
 
 	std::cout << "After tick(10): position(" << pos->x << ", " << pos->y << "), rotation(" << rot->angle << ")" << std::endl;
 
@@ -130,14 +130,14 @@ int main(int argc, char** argv)
 
 	for (int i = 0; i < 10; ++i)
 	{
-		ent = world.create();
+		ent = world->create();
 		ent->assign<SomeComponent>();
 	}
 
 	int count = 0;
 	std::cout << "Counting entities with SomeComponent..." << std::endl;
 	// range based for loop
-	for (auto ent : world.each<SomeComponent>())
+	for (auto ent : world->each<SomeComponent>())
 	{
 		++count;
 		std::cout << "Found entity #" << ent->getEntityId() << std::endl;
@@ -145,11 +145,11 @@ int main(int argc, char** argv)
 	std::cout << count << " entities have SomeComponent!" << std::endl;
 
 	// Emitting events
-	world.emit<SomeEvent>({ 4 });
+	world->emit<SomeEvent>({ 4 });
 
-	std::cout << "We have " << world.getEntities().size() << " entities right now." << std::endl;
-	world.cleanup();
-	std::cout << "After a cleanup, we have " << world.getEntities().size() << " entities." << std::endl;
+	std::cout << "We have " << world->getCount() << " entities right now." << std::endl;
+	world->cleanup();
+	std::cout << "After a cleanup, we have " << world->getCount() << " entities." << std::endl;
 
 	std::cout << "Press any key to exit..." << std::endl;
 	std::getchar();

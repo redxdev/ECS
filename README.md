@@ -94,23 +94,32 @@ as `each`:
 		// do something with ent
 	});
 
-There is no direct equivalent to `all` for a range based for loop. You may, however, use `getEntities()` instead.
+You may also use `all` in a range based for loop in a similar fashion to `each`.
 
 ### Create the world
 
 Next, inside a `main()` function somewhere, you can add the following code to create the world, setup the system, and
 create an entity:
 
-    World world;
-    world.registerSystem(new GravitySystem(-9.8f));
+    World* world = World::createWorld();
+    world->registerSystem(new GravitySystem(-9.8f));
     
-    Entity* ent = world.create();
+    Entity* ent = world->create();
     ent->assign<Position>(0.f, 0.f); // assign() takes arguments and passes them to the constructor
     ent->assign<Rotation>(35.f);
 
 Now you can call the tick function on the world in order to tick all systems that have been registered with the world:
 
-    world.tick(deltaTime);
+    world->tick(deltaTime);
+	
+#### Custom Allocators
+
+You may use any standards-compliant custom allocator. The world handles all allocations for entities and components, and you may
+pass it a custom allocator like so:
+
+    World* world = World::createWorld<MyCustomAllocatorType<Entity>>(myCustomAllocator);
+
+The default implementation uses `std::allocator<Entity>`. Note that the world will rebind allocators for different types.
 
 ### Working with components
 
@@ -162,11 +171,11 @@ type of object, and you can subscribe to specific types of events by subclassing
     // ...
     
     MyEventSubscriber* mySubscriber = new MyEventSubscriber();
-    world.subscribe<MyEvent>(mySubscriber);
+    world->subscribe<MyEvent>(mySubscriber);
     
 Then, to emit an event:
 
-    world.emit<MyEvent>({ 123, 45.67f }); // you can use initializer syntax if you want, this sets foo = 123 and bar = 45.67f
+    world->emit<MyEvent>({ 123, 45.67f }); // you can use initializer syntax if you want, this sets foo = 123 and bar = 45.67f
 
 Make sure you call `unsubscribe` or `unsubscribeAll` on your subscriber before deleting it, or else emitting the event
 may cause a crash or other undesired behavior.

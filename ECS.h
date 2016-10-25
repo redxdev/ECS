@@ -136,10 +136,10 @@ namespace ECS
 	public:
 		friend class World;
 
-		const static uint32_t InvalidEntityId = 0;
+		const static size_t InvalidEntityId = 0;
 
 		// Do not create entities yourself, use World::create().
-		Entity(class World* world, uint32_t id)
+		Entity(class World* world, size_t id)
 			: world(world), id(id)
 		{
 		}
@@ -258,14 +258,14 @@ namespace ECS
 			if (!has<Types...>())
 				return false;
 
-			view(get<Types>()...); // variadic template expansion wtf
+			view(get<Types>()...); // variadic template expansion is fun
 			return true;
 		}
 
 		/**
 		 * Get this entity's id. Entity ids aren't too useful at the moment, but can be used to tell the difference between entities when debugging.
 		 */
-		uint32_t getEntityId() const
+		size_t getEntityId() const
 		{
 			return id;
 		}
@@ -279,7 +279,7 @@ namespace ECS
 		std::unordered_map<std::type_index, Internal::BaseComponentContainer*> components;
 		World* world;
 
-		uint32_t id;
+		size_t id;
 		bool bPendingDestroy = false;
 	};
 
@@ -414,22 +414,14 @@ namespace ECS
 		class EntityIterator
 		{
 		public:
-			EntityIterator(class World* world, uint32_t index, bool bIsEnd, const EntityFilter& filter)
-				: bIsEnd(bIsEnd), index(index), world(world), filter(filter)
-			{
-				if (index >= world->getCount())
-					this->bIsEnd = true;
-			}
+			EntityIterator(class World* world, size_t index, bool bIsEnd, const EntityFilter& filter);
 
-			uint32_t getIndex() const
+			size_t getIndex() const
 			{
 				return index;
 			}
 
-			bool isEnd() const
-			{
-				return bIsEnd || index >= world->getCount();
-			}
+			bool isEnd() const;
 
 			World* getWorld() const
 			{
@@ -441,13 +433,7 @@ namespace ECS
 				return filter;
 			}
 
-			Entity* get() const
-			{
-				if (bIsEnd)
-					return nullptr;
-
-				return world->getByIndex(index);
-			}
+			Entity* get() const;
 
 			Entity* operator*() const
 			{
@@ -476,23 +462,11 @@ namespace ECS
 				return index != other.index;
 			}
 
-			EntityIterator& operator++()
-			{
-				++index;
-				while (index < world->getCount() && !filter.filter(get()))
-				{
-					++index;
-				}
-
-				if (index >= world->getCount())
-					bIsEnd = true;
-
-				return *this;
-			}
+			EntityIterator& operator++();
 
 		private:
 			bool bIsEnd = false;
-			uint32_t index;
+			size_t index;
 			class ECS::World* world;
 			const EntityFilter& filter;
 		};
@@ -536,6 +510,30 @@ namespace ECS
 	class World
 	{
 	public:
+		/**
+		 * Use this function to construct the world with a custom allocator.
+		 */
+		template<typename Allocator = std::allocator<Entity>>
+		static World* createWorld(Allocator alloc)
+		{
+			using WorldTemplate = Internal::WorldImpl<Allocator>;
+			using WorldAllocator = std::allocator_traits<Allocator>::template rebind_alloc<WorldTemplate>;
+			
+			WorldAllocator worldAlloc(alloc);
+			WorldTemplate* world = std::allocator_traits<WorldAllocator>::allocate(worldAlloc, 1);
+			std::allocator_traits<WorldAllocator>::construct(worldAlloc, world, alloc);
+
+			return world;
+		}
+
+		/**
+		 * Use this function to construct the world with the default allocator.
+		 */
+		static World* createWorld()
+		{
+			return createWorld(std::allocator<Entity>());
+		}
+
 		/**
 		 * Destroying the world will emit OnEntityDestroyed events and call EntitySystem::unconfigure() as appropriate.
 		 */
@@ -589,7 +587,7 @@ namespace ECS
 		template<typename T>
 		void subscribe(EventSubscriber<T>* subscriber)
 		{
-			subscribe(subscriber, typeid(T));
+			subscribeInternal(subscriber, typeid(T));
 		}
 
 		/**
@@ -598,7 +596,7 @@ namespace ECS
 		template<typename T>
 		void unsubscribe(EventSubscriber<T>* subscriber)
 		{
-			unsubscribe(subscriber, typeid(T));
+			unsubscribeInternal(subscriber, typeid(T));
 		}
 
 		/**
@@ -612,7 +610,7 @@ namespace ECS
 		template<typename T>
 		void emit(const T& event)
 		{
-			emit(typeid(T), [&, this](Internal::BaseEventSubscriber* base) {
+			emitInternal(typeid(T), [&, this](Internal::BaseEventSubscriber* base) {
 				auto* sub = reinterpret_cast<EventSubscriber<T>*>(base);
 				sub->receive(this, event);
 			});
@@ -653,26 +651,26 @@ namespace ECS
 		 * has little overhead. This is mostly useful with a range based for loop.
 		 */
 		template<typename... Types>
-		Internal::EntityView each(bool bIncludePendingDestroy = false) const
+		Internal::EntityView each(bool bIncludePendingDestroy = false)
 		{
 			Internal::ComponentFilter<Types...> filter(bIncludePendingDestroy);
 			return createView(filter);
 		}
 
-		Internal::EntityView all(bool bIncludePendingDestroy = false) const
+		Internal::EntityView all(bool bIncludePendingDestroy = false)
 		{
 			Internal::PendingDestroyFilter filter(bIncludePendingDestroy);
 			return createView(filter);
 		}
 
-		virtual uint32_t getCount() const = 0;
+		virtual size_t getCount() const = 0;
 
-		virtual Entity* getByIndex(uint32_t idx) const = 0;
+		virtual Entity* getByIndex(size_t idx) const = 0;
 
 		/**
 		 * Get an entity by an id. This is a slow process.
 		 */
-		virtual Entity* getById(uint32_t id) const = 0;
+		virtual Entity* getById(size_t id) const = 0;
 
 		/**
 		 * Tick the world. See the definition for ECS_TICK_TYPE at the top of this file for more information on
@@ -685,17 +683,61 @@ namespace ECS
 #endif
 
 	protected:
-		virtual void subscribe(Internal::BaseEventSubscriber* subscriber, const std::type_info& typeInfo) = 0;
-		virtual void unsubscribe(Internal::BaseEventSubscriber* subscriber, const std::type_info& typeInfo) = 0;
+		virtual void subscribeInternal(Internal::BaseEventSubscriber* subscriber, const std::type_info& typeInfo) = 0;
+		virtual void unsubscribeInternal(Internal::BaseEventSubscriber* subscriber, const std::type_info& typeInfo) = 0;
 
 		// This is a workaround, need to find a better way to do this later.
-		virtual void emit(const std::type_info& typeInfo, std::function<void(Internal::BaseEventSubscriber*)> func) = 0;
+		virtual void emitInternal(const std::type_info& typeInfo, std::function<void(Internal::BaseEventSubscriber*)> func) = 0;
 
-		virtual Internal::EntityView createView(const Internal::EntityFilter& filter) const = 0;
+		virtual Internal::EntityView createView(const Internal::EntityFilter& filter) = 0;
+
+		static bool isEntityPendingDestroy(Entity* ent)
+		{
+			return ent->bPendingDestroy;
+		}
+
+		static void setEntityPendingDestroy(Entity* ent, bool bPendingDestroy)
+		{
+			ent->bPendingDestroy = bPendingDestroy;
+		}
 	};
 
 	namespace Internal
 	{
+		EntityIterator::EntityIterator(class World* world, size_t index, bool bIsEnd, const EntityFilter& filter)
+			: bIsEnd(bIsEnd), index(index), world(world), filter(filter)
+		{
+			if (index >= world->getCount())
+				this->bIsEnd = true;
+		}
+
+		bool EntityIterator::isEnd() const
+		{
+			return bIsEnd || index >= world->getCount();
+		}
+
+		Entity* EntityIterator::get() const
+		{
+			if (bIsEnd)
+				return nullptr;
+
+			return world->getByIndex(index);
+		}
+
+		EntityIterator& EntityIterator::operator++()
+		{
+			++index;
+			while (index < world->getCount() && !filter.filter(get()))
+			{
+				++index;
+			}
+
+			if (index >= world->getCount())
+				bIsEnd = true;
+
+			return *this;
+		}
+
 		/**
 		 * Templated implementation for the world. This exists so we can have a common interface to the world (ECS::World) without
 		 * having to also template entities, systems, etc. The default template uses standard allocators.
@@ -715,29 +757,29 @@ namespace ECS
 				: entAlloc(alloc), systemAlloc(alloc),
 				entities({}, EntityPtrAllocator(alloc)),
 				systems({}, SystemPtrAllocator(alloc)),
-				subscribers({}, 0, hash<std::type_index>(), std::equal_to<std::type_index>(), SubscriberPairAllocator(alloc))
+				subscribers({}, 0, std::hash<std::type_index>(), std::equal_to<std::type_index>(), SubscriberPairAllocator(alloc))
 			{
 			}
 
-			virtual ~World()
+			virtual ~WorldImpl()
 			{
 				for (auto* ent : entities)
 				{
-					if (!ent->bPendingDestroy)
+					if (!isEntityPendingDestroy(ent))
 					{
-						ent->bPendingDestroy = true;
+						setEntityPendingDestroy(ent, true);
 						emit<Events::OnEntityDestroyed>({ ent });
 					}
 
 					std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
-					std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent);
+					std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent, 1);
 				}
 
 				for (auto* system : systems)
 				{
 					system->unconfigure(this);
-					std::allocator_traits<SystemAllocator>::destroy(system);
-					std::allocator_traits<SystemAllocator>::deallocate(system);
+					std::allocator_traits<SystemAllocator>::destroy(systemAlloc, system);
+					std::allocator_traits<SystemAllocator>::deallocate(systemAlloc, system, 1);
 				}
 			}
 
@@ -764,13 +806,13 @@ namespace ECS
 					{
 						entities.erase(std::remove(entities.begin(), entities.end(), ent), entities.end());
 						std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
-						std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent);
+						std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent, 1);
 					}
 
 					return;
 				}
 
-				ent->bPendingDestroy = true;
+				setEntityPendingDestroy(ent, true);
 
 				emit<Events::OnEntityDestroyed>({ ent });
 
@@ -778,19 +820,20 @@ namespace ECS
 				{
 					entities.erase(std::remove(entities.begin(), entities.end(), ent), entities.end());
 					std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
-					std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent);
+					std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent, 1);
 				}
 			}
 
 			virtual bool cleanup() override
 			{
-				uint32_t count = 0;
-				entities.erase(std::remove_if(entities.begin(), entities.end(), [this](auto* ent) {
+				size_t count = 0;
+				entities.erase(std::remove_if(entities.begin(), entities.end(), [&, this](auto* ent) {
 					if (ent->isPendingDestroy())
 					{
 						std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
-						std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent);
+						std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent, 1);
 						++count;
+						return true;
 					}
 
 					return false;
@@ -803,13 +846,13 @@ namespace ECS
 			{
 				for (auto* ent : entities)
 				{
-					if (!ent->bPendingDestroy)
+					if (!isEntityPendingDestroy(ent))
 					{
-						ent->bPendingDestroy = true;
+						setEntityPendingDestroy(ent, true);
 						emit<Events::OnEntityDestroyed>({ ent });
 					}
 					std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
-					std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent);
+					std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent, 1);
 				}
 
 				entities.clear();
@@ -840,12 +883,12 @@ namespace ECS
 				}
 			}
 
-			virtual uint32_t getCount() const override
+			virtual size_t getCount() const override
 			{
 				return entities.size();
 			}
 
-			virtual Entity* getByIndex(uint32_t idx) const override
+			virtual Entity* getByIndex(size_t idx) const override
 			{
 				if (idx >= getCount())
 					return nullptr;
@@ -853,7 +896,7 @@ namespace ECS
 				return entities[idx];
 			}
 
-			virtual Entity* getById(uint32_t id) const override
+			virtual Entity* getById(size_t id) const override
 			{
 				if (id == Entity::InvalidEntityId || id > lastEntityId)
 					return nullptr;
@@ -889,7 +932,7 @@ namespace ECS
 			}
 
 		protected:
-			virtual void subscribe(BaseEventSubscriber* subscriber, const std::type_info& typeInfo) override
+			virtual void subscribeInternal(BaseEventSubscriber* subscriber, const std::type_info& typeInfo) override
 			{
 				auto found = subscribers.find(std::type_index(typeInfo));
 				if (found == subscribers.end())
@@ -905,7 +948,7 @@ namespace ECS
 				}
 			}
 
-			virtual void unsubscribe(Internal::BaseEventSubscriber* subscriber, const std::type_info& typeInfo) override
+			virtual void unsubscribeInternal(Internal::BaseEventSubscriber* subscriber, const std::type_info& typeInfo) override
 			{
 				auto found = subscribers.find(std::type_index(typeInfo));
 				if (found != subscribers.end())
@@ -918,7 +961,7 @@ namespace ECS
 				}
 			}
 
-			virtual void emit(const std::type_info& typeInfo, std::function<void(Internal::BaseEventSubscriber*)> func) override
+			virtual void emitInternal(const std::type_info& typeInfo, std::function<void(Internal::BaseEventSubscriber*)> func) override
 			{
 				auto found = subscribers.find(std::type_index(typeInfo));
 				if (found != subscribers.end())
@@ -930,7 +973,7 @@ namespace ECS
 				}
 			}
 
-			virtual EntityView createView(const EntityFilter& filter) const override
+			virtual EntityView createView(const EntityFilter& filter) override
 			{
 				EntityIterator first(this, 0, false, filter);
 				EntityIterator last(this, getCount(), true, filter);
@@ -949,7 +992,7 @@ namespace ECS
 				std::equal_to<std::type_index>,
 				SubscriberPairAllocator> subscribers;
 
-			uint32_t lastEntityId = 0;
+			size_t lastEntityId = 0;
 		};
 	}
 }
