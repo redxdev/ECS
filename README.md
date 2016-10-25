@@ -112,6 +112,10 @@ Now you can call the tick function on the world in order to tick all systems tha
 
     world->tick(deltaTime);
 	
+Once you are done with the world, make sure to destroy it!
+
+    world->destroy();
+	
 #### Custom Allocators
 
 You may use any standards-compliant custom allocator. The world handles all allocations for entities and components, and you may

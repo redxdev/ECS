@@ -362,59 +362,10 @@ namespace ECS
 
 	namespace Internal
 	{
-		class EntityFilter
-		{
-		public:
-			virtual ~EntityFilter() {};
-			virtual bool filter(Entity* ent) const = 0;
-		};
-
-		class PendingDestroyFilter : public EntityFilter
-		{
-		public:
-			PendingDestroyFilter(bool bIncludePendingDestroy)
-				: bIncludePendingDestroy(bIncludePendingDestroy)
-			{
-			}
-
-			virtual ~PendingDestroyFilter() {}
-
-			virtual bool filter(Entity* ent) const override
-			{
-				if (bIncludePendingDestroy)
-					return true;
-
-				return !ent->isPendingDestroy();
-			}
-
-		private:
-			bool bIncludePendingDestroy;
-		};
-
-		template<typename... Types>
-		class ComponentFilter : public PendingDestroyFilter
-		{
-		public:
-			ComponentFilter(bool bIncludePendingDestroy)
-				: PendingDestroyFilter(bIncludePendingDestroy)
-			{
-			}
-			
-			virtual ~ComponentFilter() {}
-
-			virtual bool filter(Entity* ent) const override
-			{
-				if (!PendingDestroyFilter::filter(ent))
-					return false;
-
-				return ent->has<Types...>();
-			}
-		};
-
 		class EntityIterator
 		{
 		public:
-			EntityIterator(class World* world, size_t index, bool bIsEnd, const EntityFilter& filter);
+			EntityIterator(class World* world, size_t index, bool bIsEnd, bool bIncludePendingDestroy);
 
 			size_t getIndex() const
 			{
@@ -423,14 +374,14 @@ namespace ECS
 
 			bool isEnd() const;
 
+			bool includePendingDestroy() const
+			{
+				return bIncludePendingDestroy;
+			}
+
 			World* getWorld() const
 			{
 				return world;
-			}
-
-			const EntityFilter& getFilter() const
-			{
-				return filter;
 			}
 
 			Entity* get() const;
@@ -468,7 +419,7 @@ namespace ECS
 			bool bIsEnd = false;
 			size_t index;
 			class ECS::World* world;
-			const EntityFilter& filter;
+			bool bIncludePendingDestroy;
 		};
 
 		class EntityView
@@ -477,7 +428,7 @@ namespace ECS
 			EntityView(const EntityIterator& first, const EntityIterator& last)
 				: firstItr(first), lastItr(last)
 			{
-				if (!firstItr.getFilter().filter(firstItr.get()))
+				if (firstItr.get() == nullptr || (firstItr.get()->isPendingDestroy() && !firstItr.includePendingDestroy()))
 				{
 					++firstItr;
 				}
@@ -496,6 +447,122 @@ namespace ECS
 		private:
 			EntityIterator firstItr;
 			EntityIterator lastItr;
+		};
+
+		template<typename... Types>
+		class EntityComponentIterator
+		{
+		public:
+			EntityComponentIterator(class World* world, size_t index, bool bIsEnd, bool bIncludePendingDestroy)
+				: bIsEnd(bIsEnd), index(index), world(world), bIncludePendingDestroy(bIncludePendingDestroy)
+			{
+				if (index >= world->getCount())
+					this->bIsEnd = true;
+			}
+
+			size_t getIndex() const
+			{
+				return index;
+			}
+
+			bool isEnd() const
+			{
+				return bIsEnd || index >= world->getCount();
+			}
+
+			bool includePendingDestroy() const
+			{
+				return bIncludePendingDestroy;
+			}
+
+			World* getWorld() const
+			{
+				return world;
+			}
+
+			Entity* get() const
+			{
+				if (isEnd())
+					return nullptr;
+
+				return world->getByIndex(index);
+			}
+
+			Entity* operator*() const
+			{
+				return get();
+			}
+
+			bool operator==(const EntityComponentIterator<Types...>& other) const
+			{
+				if (world != other.world)
+					return false;
+
+				if (isEnd())
+					return other.isEnd();
+
+				return index == other.index;
+			}
+
+			bool operator!=(const EntityComponentIterator<Types...>& other) const
+			{
+				if (world != other.world)
+					return true;
+
+				if (isEnd())
+					return !other.isEnd();
+
+				return index != other.index;
+			}
+
+			EntityComponentIterator<Types...>& operator++()
+			{
+				++index;
+				while (index < world->getCount() && (get() == nullptr || !get()->has<Types...>() || (get()->isPendingDestroy() && !bIncludePendingDestroy)))
+				{
+					++index;
+				}
+
+				if (index >= world->getCount())
+					bIsEnd = true;
+
+				return *this;
+			}
+
+		private:
+			bool bIsEnd = false;
+			size_t index;
+			class ECS::World* world;
+			bool bIncludePendingDestroy;
+		};
+
+		template<typename... Types>
+		class EntityComponentView
+		{
+		public:
+			EntityComponentView(const EntityComponentIterator<Types...>& first, const EntityComponentIterator<Types...>& last)
+				: firstItr(first), lastItr(last)
+			{
+				if (firstItr.get() == nullptr || (firstItr.get()->isPendingDestroy() && !firstItr.includePendingDestroy())
+					|| !firstItr.get()->has<Types...>())
+				{
+					++firstItr;
+				}
+			}
+
+			EntityComponentIterator<Types...> begin()
+			{
+				return firstItr;
+			}
+
+			EntityComponentIterator<Types...> end()
+			{
+				return lastItr;
+			}
+
+		private:
+			EntityComponentIterator<Types...> firstItr;
+			EntityComponentIterator<Types...> lastItr;
 		};
 	}
 
@@ -534,8 +601,12 @@ namespace ECS
 			return createWorld(std::allocator<Entity>());
 		}
 
+		virtual void destroyWorld() = 0;
+
 		/**
 		 * Destroying the world will emit OnEntityDestroyed events and call EntitySystem::unconfigure() as appropriate.
+		 *
+		 * Use World::destroyWorld to destroy and deallocate the world, do not manually delete the world!
 		 */
 		virtual ~World() {}
 
@@ -624,9 +695,7 @@ namespace ECS
 		template<typename... Types>
 		void each(std::function<void(Entity*, ComponentHandle<Types>...)> viewFunc, bool bIncludePendingDestroy = false)
 		{
-			Internal::ComponentFilter<Types...> filter(bIncludePendingDestroy);
-			Internal::EntityView view = createView(filter);
-			for (auto* ent : view)
+			for (auto* ent : each<Types...>(bIncludePendingDestroy))
 			{
 				viewFunc(ent, ent->get<Types>()...);
 			}
@@ -637,10 +706,7 @@ namespace ECS
 		*/
 		void all(std::function<void(Entity*)> viewFunc, bool bIncludePendingDestroy = false)
 		{
-			Internal::PendingDestroyFilter filter(bIncludePendingDestroy);
-			Internal::EntityView view = createView(filter);
-
-			for (auto* ent : view)
+			for (auto* ent : all(bIncludePendingDestroy))
 			{
 				viewFunc(ent);
 			}
@@ -651,16 +717,18 @@ namespace ECS
 		 * has little overhead. This is mostly useful with a range based for loop.
 		 */
 		template<typename... Types>
-		Internal::EntityView each(bool bIncludePendingDestroy = false)
+		Internal::EntityComponentView<Types...> each(bool bIncludePendingDestroy = false)
 		{
-			Internal::ComponentFilter<Types...> filter(bIncludePendingDestroy);
-			return createView(filter);
+			Internal::EntityComponentIterator<Types...> first(this, 0, false, bIncludePendingDestroy);
+			Internal::EntityComponentIterator<Types...> last(this, getCount(), true, bIncludePendingDestroy);
+			return Internal::EntityComponentView<Types...>(first, last);
 		}
 
 		Internal::EntityView all(bool bIncludePendingDestroy = false)
 		{
-			Internal::PendingDestroyFilter filter(bIncludePendingDestroy);
-			return createView(filter);
+			Internal::EntityIterator first(this, 0, false, bIncludePendingDestroy);
+			Internal::EntityIterator last(this, getCount(), true, bIncludePendingDestroy);
+			return Internal::EntityView(first, last);
 		}
 
 		virtual size_t getCount() const = 0;
@@ -689,8 +757,6 @@ namespace ECS
 		// This is a workaround, need to find a better way to do this later.
 		virtual void emitInternal(const std::type_info& typeInfo, std::function<void(Internal::BaseEventSubscriber*)> func) = 0;
 
-		virtual Internal::EntityView createView(const Internal::EntityFilter& filter) = 0;
-
 		static bool isEntityPendingDestroy(Entity* ent)
 		{
 			return ent->bPendingDestroy;
@@ -704,8 +770,8 @@ namespace ECS
 
 	namespace Internal
 	{
-		EntityIterator::EntityIterator(class World* world, size_t index, bool bIsEnd, const EntityFilter& filter)
-			: bIsEnd(bIsEnd), index(index), world(world), filter(filter)
+		EntityIterator::EntityIterator(class World* world, size_t index, bool bIsEnd, bool bIncludePendingDestroy)
+			: bIsEnd(bIsEnd), index(index), world(world), bIncludePendingDestroy(bIncludePendingDestroy)
 		{
 			if (index >= world->getCount())
 				this->bIsEnd = true;
@@ -718,7 +784,7 @@ namespace ECS
 
 		Entity* EntityIterator::get() const
 		{
-			if (bIsEnd)
+			if (isEnd())
 				return nullptr;
 
 			return world->getByIndex(index);
@@ -727,7 +793,7 @@ namespace ECS
 		EntityIterator& EntityIterator::operator++()
 		{
 			++index;
-			while (index < world->getCount() && !filter.filter(get()))
+			while (index < world->getCount() && (get() == nullptr || (get()->isPendingDestroy() && !bIncludePendingDestroy)))
 			{
 				++index;
 			}
@@ -746,6 +812,7 @@ namespace ECS
 		class WorldImpl : public ECS::World
 		{
 		public:
+			using WorldAllocator = std::allocator_traits<Allocator>::template rebind_alloc<WorldImpl<Allocator>>;
 			using EntityAllocator = std::allocator_traits<Allocator>::template rebind_alloc<Entity>;
 			using SystemAllocator = std::allocator_traits<Allocator>::template rebind_alloc<EntitySystem>;
 			using EntityPtrAllocator = std::allocator_traits<Allocator>::template rebind_alloc<Entity*>;
@@ -781,6 +848,13 @@ namespace ECS
 					std::allocator_traits<SystemAllocator>::destroy(systemAlloc, system);
 					std::allocator_traits<SystemAllocator>::deallocate(systemAlloc, system, 1);
 				}
+			}
+
+			virtual void destroyWorld() override
+			{
+				WorldAllocator alloc(entAlloc);
+				std::allocator_traits<WorldAllocator>::destroy(alloc, this);
+				std::allocator_traits<WorldAllocator>::deallocate(alloc, this, 1);
 			}
 
 			virtual Entity* create() override
@@ -931,6 +1005,11 @@ namespace ECS
 				}
 			}
 
+			EntityAllocator& getPrimaryAllocator()
+			{
+				return entAlloc;
+			}
+
 		protected:
 			virtual void subscribeInternal(BaseEventSubscriber* subscriber, const std::type_info& typeInfo) override
 			{
@@ -971,13 +1050,6 @@ namespace ECS
 						func(base);
 					}
 				}
-			}
-
-			virtual EntityView createView(const EntityFilter& filter) override
-			{
-				EntityIterator first(this, 0, false, filter);
-				EntityIterator last(this, getCount(), true, filter);
-				return EntityView(first, last);
 			}
 
 		private:

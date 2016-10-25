@@ -151,6 +151,10 @@ int main(int argc, char** argv)
 	world->cleanup();
 	std::cout << "After a cleanup, we have " << world->getCount() << " entities." << std::endl;
 
+	std::cout << "Destroying the world..." << std::endl;
+
+	world->destroyWorld();
+
 	std::cout << "Press any key to exit..." << std::endl;
 	std::getchar();
 
