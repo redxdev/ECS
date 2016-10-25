@@ -56,8 +56,9 @@ SOFTWARE.
 
 namespace ECS
 {
-
 	typedef float DefaultTickData;
+
+	class World;
 
 	// Do not use anything in the Internal namespace yourself.
 	namespace Internal
@@ -361,87 +362,346 @@ namespace ECS
 
 	namespace Internal
 	{
-		template<typename... Types>
-		class EntityIterator
+		class EntityFilter
 		{
 		public:
-			EntityIterator(const std::vector<Entity*>::iterator& itr, const std::vector<Entity*>::iterator& end, bool bIncludePendingDestroy)
-				: itr(itr), end(end), bIncludePendingDestroy(bIncludePendingDestroy)
+			virtual ~EntityFilter() {};
+			virtual bool filter(Entity* ent) const = 0;
+		};
+
+		class PendingDestroyFilter : public EntityFilter
+		{
+		public:
+			PendingDestroyFilter(bool bIncludePendingDestroy)
+				: bIncludePendingDestroy(bIncludePendingDestroy)
 			{
 			}
 
-			std::vector<Entity*>::iterator& getRawIterator()
+			virtual ~PendingDestroyFilter() {}
+
+			virtual bool filter(Entity* ent) const override
 			{
-				return itr;
+				if (bIncludePendingDestroy)
+					return true;
+
+				return !ent->isPendingDestroy();
+			}
+
+		private:
+			bool bIncludePendingDestroy;
+		};
+
+		template<typename... Types>
+		class ComponentFilter : public PendingDestroyFilter
+		{
+		public:
+			ComponentFilter(bool bIncludePendingDestroy)
+				: PendingDestroyFilter(bIncludePendingDestroy)
+			{
+			}
+			
+			virtual ~ComponentFilter() {}
+
+			virtual bool filter(Entity* ent) const override
+			{
+				if (!PendingDestroyFilter::filter(ent))
+					return false;
+
+				return ent->has<Types...>();
+			}
+		};
+
+		class EntityIterator
+		{
+		public:
+			EntityIterator(class World* world, uint32_t index, bool bIsEnd, const EntityFilter& filter)
+				: bIsEnd(bIsEnd), index(index), world(world), filter(filter)
+			{
+				if (index >= world->getCount())
+					this->bIsEnd = true;
+			}
+
+			uint32_t getIndex() const
+			{
+				return index;
+			}
+
+			bool isEnd() const
+			{
+				return bIsEnd || index >= world->getCount();
+			}
+
+			World* getWorld() const
+			{
+				return world;
+			}
+
+			const EntityFilter& getFilter() const
+			{
+				return filter;
+			}
+
+			Entity* get() const
+			{
+				if (bIsEnd)
+					return nullptr;
+
+				return world->getByIndex(index);
 			}
 
 			Entity* operator*() const
 			{
-				return *itr;
+				return get();
 			}
 
 			bool operator==(const EntityIterator& other) const
 			{
-				return itr == other.itr;
+				if (world != other.world)
+					return false;
+
+				if (isEnd())
+					return other.isEnd();
+
+				return index == other.index;
 			}
 
 			bool operator!=(const EntityIterator& other) const
 			{
-				return itr != other.itr;
+				if (world != other.world)
+					return true;
+
+				if (isEnd())
+					return !other.isEnd();
+
+				return index != other.index;
 			}
 
 			EntityIterator& operator++()
 			{
-				++itr;
-				while (itr != end && !(*itr)->has<Types...>() && (bIncludePendingDestroy || !(*itr)->isPendingDestroy()))
+				++index;
+				while (index < world->getCount() && !filter.filter(get()))
 				{
-					++itr;
+					++index;
 				}
+
+				if (index >= world->getCount())
+					bIsEnd = true;
 
 				return *this;
 			}
 
 		private:
-			std::vector<Entity*>::iterator itr;
-			std::vector<Entity*>::iterator end;
-			bool bIncludePendingDestroy;
+			bool bIsEnd = false;
+			uint32_t index;
+			class ECS::World* world;
+			const EntityFilter& filter;
 		};
 
-		template<typename... Types>
 		class EntityView
 		{
 		public:
-			EntityView(const std::vector<Entity*>::iterator& first, const std::vector<Entity*>::iterator& last, bool bIncludePendingDestroy)
-				: first(first), last(last), bIncludePendingDestroy(bIncludePendingDestroy)
+			EntityView(const EntityIterator& first, const EntityIterator& last)
+				: firstItr(first), lastItr(last)
 			{
-				while (this->first != this->last && !(*this->first)->has<Types...>() && (bIncludePendingDestroy || !(*this->first)->isPendingDestroy()))
+				if (!firstItr.getFilter().filter(firstItr.get()))
 				{
-					++this->first;
+					++firstItr;
 				}
 			}
 
-			EntityIterator<Types...> begin()
+			EntityIterator begin()
 			{
-				return EntityIterator<Types...>(first, last, bIncludePendingDestroy);
+				return firstItr;
 			}
 
-			EntityIterator<Types...> end()
+			EntityIterator end()
 			{
-				return EntityIterator<Types...>(last, last, bIncludePendingDestroy);
+				return lastItr;
 			}
 
 		private:
-			std::vector<Entity*>::iterator first;
-			std::vector<Entity*>::iterator last;
-			bool bIncludePendingDestroy;
+			EntityIterator firstItr;
+			EntityIterator lastItr;
 		};
+	}
 
+	/**
+	 * The world creates, destroys, and manages entities. The lifetime of entities and _registered_ systems are handled by the world
+	 * (don't delete a system without unregistering it from the world first!), while event subscribers have their own lifetimes
+	 * (the world doesn't delete them automatically when the world is deleted).
+	 *
+	 * This is just a common interface, the actual world implementation is ECS::Internal::WorldImpl. Don't use it directly.
+	 * Create worlds using ECS::World::createWorld();
+	 */
+	class World
+	{
+	public:
+		/**
+		 * Destroying the world will emit OnEntityDestroyed events and call EntitySystem::unconfigure() as appropriate.
+		 */
+		virtual ~World() {}
+
+		/**
+		 * Create a new entity. This will emit the OnEntityCreated event.
+		 */
+		virtual Entity* create() = 0;
+
+		/**
+		 * Destroy an entity. This will emit the OnEntityDestroy event.
+		 *
+		 * If immediate is false (recommended), then the entity won't be immediately
+		 * deleted but instead will be removed at the beginning of the next tick() or
+		 * when cleanup() is called. OnEntityDestroyed will still be called immediately.
+		 *
+		 * This function is safe to call multiple times on a single entity. Note that calling
+		 * this once with immediate = false and then calling it with immediate = true will
+		 * remove the entity from the pending destroy queue and will immediately destroy it
+		 * _without_ emitting a second OnEntityDestroyed event.
+		 *
+		 * A warning: Do not set immediate to true if you are currently iterating through entities!
+		 */
+		virtual void destroy(Entity* ent, bool immediate = false) = 0;
+
+		/**
+		 * Delete all entities in the pending destroy queue. Returns true if any entities were cleaned up,
+		 * false if there were no entities to clean up.
+		 */
+		virtual bool cleanup() = 0;
+
+		/**
+		 * Reset the world, destroying all entities. Entity ids will be reset as well.
+		 */
+		virtual void reset() = 0;
+
+		/**
+		 * Register a system. The world will manage the memory of the system unless you unregister the system.
+		 */
+		virtual void registerSystem(EntitySystem* system) = 0;
+
+		/**
+		 * Unregister a system.
+		 */
+		virtual void unregisterSystem(EntitySystem* system) = 0;
+
+		/**
+		 * Subscribe to an event.
+		 */
+		template<typename T>
+		void subscribe(EventSubscriber<T>* subscriber)
+		{
+			subscribe(subscriber, typeid(T));
+		}
+
+		/**
+		 * Unsubscribe from an event.
+		 */
+		template<typename T>
+		void unsubscribe(EventSubscriber<T>* subscriber)
+		{
+			unsubscribe(subscriber, typeid(T));
+		}
+
+		/**
+		 * Unsubscribe from all events. Don't be afraid of the void pointer, just pass in your subscriber as normal.
+		 */
+		virtual void unsubscribeAll(void* subscriber) = 0;
+
+		/**
+		 * Emit an event. This will do nothing if there are no subscribers for the event type.
+		 */
+		template<typename T>
+		void emit(const T& event)
+		{
+			emit(typeid(T), [&, this](Internal::BaseEventSubscriber* base) {
+				auto* sub = reinterpret_cast<EventSubscriber<T>*>(base);
+				sub->receive(this, event);
+			});
+		}
+
+		/**
+		 * Run a function on each entity with a specific set of components. This is useful for implementing an EntitySystem.
+		 *
+		 * If you want to include entities that are pending destruction, set includePendingDestroy to true.
+		 */
+		template<typename... Types>
+		void each(std::function<void(Entity*, ComponentHandle<Types>...)> viewFunc, bool bIncludePendingDestroy = false)
+		{
+			Internal::ComponentFilter<Types...> filter(bIncludePendingDestroy);
+			Internal::EntityView view = createView(filter);
+			for (auto* ent : view)
+			{
+				viewFunc(ent, ent->get<Types>()...);
+			}
+		}
+
+		/**
+		* Run a function on all entities.
+		*/
+		void all(std::function<void(Entity*)> viewFunc, bool bIncludePendingDestroy = false)
+		{
+			Internal::PendingDestroyFilter filter(bIncludePendingDestroy);
+			Internal::EntityView view = createView(filter);
+
+			for (auto* ent : view)
+			{
+				viewFunc(ent);
+			}
+		}
+
+		/**
+		 * Get a view for entities with a specific set of components. The list of entities is calculated on the fly, so this method itself
+		 * has little overhead. This is mostly useful with a range based for loop.
+		 */
+		template<typename... Types>
+		Internal::EntityView each(bool bIncludePendingDestroy = false) const
+		{
+			Internal::ComponentFilter<Types...> filter(bIncludePendingDestroy);
+			return createView(filter);
+		}
+
+		Internal::EntityView all(bool bIncludePendingDestroy = false) const
+		{
+			Internal::PendingDestroyFilter filter(bIncludePendingDestroy);
+			return createView(filter);
+		}
+
+		virtual uint32_t getCount() const = 0;
+
+		virtual Entity* getByIndex(uint32_t idx) const = 0;
+
+		/**
+		 * Get an entity by an id. This is a slow process.
+		 */
+		virtual Entity* getById(uint32_t id) const = 0;
+
+		/**
+		 * Tick the world. See the definition for ECS_TICK_TYPE at the top of this file for more information on
+		 * passing data through tick().
+		 */
+#ifdef ECS_TICK_TYPE_VOID
+		virtual void tick() = 0;
+#else
+		virtual void tick(ECS_TICK_TYPE data) = 0;
+#endif
+
+	protected:
+		virtual void subscribe(Internal::BaseEventSubscriber* subscriber, const std::type_info& typeInfo) = 0;
+		virtual void unsubscribe(Internal::BaseEventSubscriber* subscriber, const std::type_info& typeInfo) = 0;
+
+		// This is a workaround, need to find a better way to do this later.
+		virtual void emit(const std::type_info& typeInfo, std::function<void(Internal::BaseEventSubscriber*)> func) = 0;
+
+		virtual Internal::EntityView createView(const Internal::EntityFilter& filter) const = 0;
+	};
+
+	namespace Internal
+	{
 		/**
 		 * Templated implementation for the world. This exists so we can have a common interface to the world (ECS::World) without
 		 * having to also template entities, systems, etc. The default template uses standard allocators.
 		 */
 		template<typename Allocator = std::allocator<Entity>>
-		class WorldImpl : class ECS::World
+		class WorldImpl : public ECS::World
 		{
 		public:
 			using EntityAllocator = std::allocator_traits<Allocator>::template rebind_alloc<Entity>;
@@ -580,6 +840,54 @@ namespace ECS
 				}
 			}
 
+			virtual uint32_t getCount() const override
+			{
+				return entities.size();
+			}
+
+			virtual Entity* getByIndex(uint32_t idx) const override
+			{
+				if (idx >= getCount())
+					return nullptr;
+
+				return entities[idx];
+			}
+
+			virtual Entity* getById(uint32_t id) const override
+			{
+				if (id == Entity::InvalidEntityId || id > lastEntityId)
+					return nullptr;
+
+				// We should likely store entities in a map of id -> entity so that this is faster.
+				for (auto* ent : entities)
+				{
+					if (ent->getEntityId() == id)
+						return ent;
+				}
+
+				return nullptr;
+			}
+
+#ifdef ECS_TICK_TYPE_VOID
+			virtual void tick() override
+#else
+			virtual void tick(ECS_TICK_TYPE data) override
+#endif
+			{
+#ifndef ECS_TICK_NO_CLEANUP
+				cleanup();
+#endif
+
+				for (auto* system : systems)
+				{
+#ifdef ECS_TICK_TYPE_VOID
+					system->tick(this);
+#else
+					system->tick(this, data);
+#endif
+				}
+			}
+
 		protected:
 			virtual void subscribe(BaseEventSubscriber* subscriber, const std::type_info& typeInfo) override
 			{
@@ -622,6 +930,13 @@ namespace ECS
 				}
 			}
 
+			virtual EntityView createView(const EntityFilter& filter) const override
+			{
+				EntityIterator first(this, 0, false, filter);
+				EntityIterator last(this, getCount(), true, filter);
+				return EntityView(first, last);
+			}
+
 		private:
 			EntityAllocator entAlloc;
 			SystemAllocator systemAlloc;
@@ -637,199 +952,4 @@ namespace ECS
 			uint32_t lastEntityId = 0;
 		};
 	}
-
-	/**
-	 * The world creates, destroys, and manages entities. The lifetime of entities and _registered_ systems are handled by the world
-	 * (don't delete a system without unregistering it from the world first!), while event subscribers have their own lifetimes
-	 * (the world doesn't delete them automatically when the world is deleted).
-	 *
-	 * This is just a common interface, the actual world implementation is ECS::Internal::WorldImpl. Don't use it directly.
-	 * Create worlds using ECS::World::createWorld();
-	 */
-	class World
-	{
-	public:
-		/**
-		 * Destroying the world will emit OnEntityDestroyed events and call EntitySystem::unconfigure() as appropriate.
-		 */
-		virtual ~World() {}
-
-		/**
-		 * Create a new entity. This will emit the OnEntityCreated event.
-		 */
-		virtual Entity* create() = 0;
-
-		/**
-		 * Destroy an entity. This will emit the OnEntityDestroy event.
-		 *
-		 * If immediate is false (recommended), then the entity won't be immediately
-		 * deleted but instead will be removed at the beginning of the next tick() or
-		 * when cleanup() is called. OnEntityDestroyed will still be called immediately.
-		 *
-		 * This function is safe to call multiple times on a single entity. Note that calling
-		 * this once with immediate = false and then calling it with immediate = true will
-		 * remove the entity from the pending destroy queue and will immediately destroy it
-		 * _without_ emitting a second OnEntityDestroyed event.
-		 *
-		 * A warning: Do not set immediate to true if you are currently iterating through entities!
-		 */
-		virtual void destroy(Entity* ent, bool immediate = false) = 0;
-
-		/**
-		 * Delete all entities in the pending destroy queue. Returns true if any entities were cleaned up,
-		 * false if there were no entities to clean up.
-		 */
-		virtual bool cleanup() = 0;
-
-		/**
-		 * Reset the world, destroying all entities. Entity ids will be reset as well.
-		 */
-		virtual void reset() = 0;
-
-		/**
-		 * Register a system. The world will manage the memory of the system unless you unregister the system.
-		 */
-		virtual void registerSystem(EntitySystem* system) = 0;
-
-		/**
-		 * Unregister a system.
-		 */
-		virtual void unregisterSystem(EntitySystem* system) = 0;
-
-		/**
-		 * Subscribe to an event.
-		 */
-		template<typename T>
-		void subscribe(EventSubscriber<T>* subscriber)
-		{
-			subscribe(subscriber, typeid(T));
-		}
-
-		/**
-		 * Unsubscribe from an event.
-		 */
-		template<typename T>
-		void unsubscribe(EventSubscriber<T>* subscriber)
-		{
-			unsubscribe(subscriber, typeid(T));
-		}
-
-		/**
-		 * Unsubscribe from all events. Don't be afraid of the void pointer, just pass in your subscriber as normal.
-		 */
-		virtual void unsubscribeAll(void* subscriber) = 0;
-
-		/**
-		 * Emit an event. This will do nothing if there are no subscribers for the event type.
-		 */
-		template<typename T>
-		void emit(const T& event)
-		{
-			emit(typeid(T), [&, this](Internal::BaseEventSubscriber* base) {
-				auto* sub = reinterpret_cast<EventSubscriber<T>*>(base);
-				sub->receive(this, event);
-			});
-		}
-
-		/**
-		 * Run a function on each entity with a specific set of components. This is useful for implementing an EntitySystem.
-		 *
-		 * If you want to include entities that are pending destruction, set includePendingDestroy to true.
-		 */
-		template<typename... Types>
-		void each(std::function<void(Entity*, ComponentHandle<Types>...)> view, bool bIncludePendingDestroy = false)
-		{
-			for (auto* ent : entities)
-			{
-				if (!bIncludePendingDestroy && ent->isPendingDestroy())
-					continue;
-
-				if (!ent->has<Types...>())
-					continue;
-
-				view(ent, ent->get<Types>()...);
-			}
-		}
-
-		/**
-		* Run a function on all entities.
-		*/
-		void all(std::function<void(Entity*)> view, bool bIncludePendingDestroy = false)
-		{
-			for (auto* ent : entities)
-			{
-				if (!bIncludePendingDestroy && ent->isPendingDestroy())
-					continue;
-
-				view(ent);
-			}
-		}
-
-		/**
-		 * Get a view for entities with a specific set of components. The list of entities is calculated on the fly, so this method itself
-		 * has little overhead. This is mostly useful with a range based for loop.
-		 */
-		template<typename... Types>
-		Internal::EntityView<Types...> each(bool bIncludePendingDestroy = false)
-		{
-			return Internal::EntityView<Types...>(entities.begin(), entities.end(), bIncludePendingDestroy);
-		}
-
-		/**
-		 * Get the list of entities.
-		 */
-		const std::vector<Entity*> getEntities() const
-		{
-			return entities;
-		}
-
-		/**
-		 * Get an entity by an id. This is a slow process.
-		 */
-		Entity* getEntityById(uint32_t id) const
-		{
-			if (id == Entity::InvalidEntityId || id > lastEntityId)
-				return nullptr;
-
-			// We should likely store entities in a map of id -> entity so that this is faster.
-			for (auto ent : entities)
-			{
-				if (ent->getEntityId() == id)
-					return ent;
-			}
-
-			return nullptr;
-		}
-
-		/**
-		 * Tick the world. See the definition for ECS_TICK_TYPE at the top of this file for more information on
-		 * passing data through tick().
-		 */
-#ifdef ECS_TICK_TYPE_VOID
-		void tick()
-#else
-		void tick(ECS_TICK_TYPE data)
-#endif
-		{
-#ifndef ECS_TICK_NO_CLEANUP
-			cleanup();
-#endif
-
-			for (auto* system : systems)
-			{
-#ifdef ECS_TICK_TYPE_VOID
-				system->tick(this);
-#else
-				system->tick(this, data);
-#endif
-			}
-		}
-
-	protected:
-		virtual void subscribe(Internal::BaseEventSubscriber* subscriber, const std::type_info& typeInfo) = 0;
-		virtual void unsubscribe(Internal::BaseEventSubscriber* subscriber, const std::type_info& typeInfo) = 0;
-
-		// This is a workaround, need to find a better way to do this later.
-		virtual void emit(const std::type_info& typeInfo, std::function<void(Internal::BaseEventSubscriber*)> func) = 0;
-	};
 }
