@@ -1,3 +1,5 @@
+#pragma once
+
 /*
 Copyright (c) 2016 Sam Bloomberg
 
@@ -19,8 +21,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
-
-#pragma once
 
 #include <typeindex>
 #include <typeinfo>
@@ -990,19 +990,19 @@ namespace ECS
 
 	namespace Internal
 	{
-		EntityIterator::EntityIterator(class World* world, size_t index, bool bIsEnd, bool bIncludePendingDestroy)
+		inline EntityIterator::EntityIterator(class World* world, size_t index, bool bIsEnd, bool bIncludePendingDestroy)
 			: bIsEnd(bIsEnd), index(index), world(world), bIncludePendingDestroy(bIncludePendingDestroy)
 		{
 			if (index >= world->getCount())
 				this->bIsEnd = true;
 		}
 
-		bool EntityIterator::isEnd() const
+		inline bool EntityIterator::isEnd() const
 		{
 			return bIsEnd || index >= world->getCount();
 		}
 
-		Entity* EntityIterator::get() const
+		inline Entity* EntityIterator::get() const
 		{
 			if (isEnd())
 				return nullptr;
@@ -1010,7 +1010,7 @@ namespace ECS
 			return world->getByIndex(index);
 		}
 
-		EntityIterator& EntityIterator::operator++()
+		inline EntityIterator& EntityIterator::operator++()
 		{
 			++index;
 			while (index < world->getCount() && (get() == nullptr || (get()->isPendingDestroy() && !bIncludePendingDestroy)))
