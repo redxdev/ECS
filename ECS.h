@@ -45,6 +45,11 @@ SOFTWARE.
 #define ECS_TICK_TYPE ECS::DefaultTickData
 #endif
 
+// Define what kind of allocator you want the world to use. It should have a default constructor.
+#ifndef ECS_ALLOCATOR_TYPE
+#define ECS_ALLOCATOR_TYPE std::allocator<ECS::Entity>
+#endif
+
 // Define ECS_TICK_NO_CLEANUP if you don't want the world to automatically cleanup dead entities
 // at the beginning of each tick. This will require you to call cleanup() manually to prevent memory
 // leaks.
@@ -56,15 +61,21 @@ SOFTWARE.
 
 namespace ECS
 {
-	typedef float DefaultTickData;
-
 	class World;
+	class Entity;
+
+	typedef float DefaultTickData;
+	typedef ECS_ALLOCATOR_TYPE Allocator;
 
 	// Do not use anything in the Internal namespace yourself.
 	namespace Internal
 	{
 		struct BaseComponentContainer
 		{
+			friend class Entity;
+
+		protected:
+			virtual void destroy(World* world) = 0;
 		};
 
 		template<typename T>
@@ -73,6 +84,16 @@ namespace ECS
 			ComponentContainer() {}
 
 			T data;
+			
+		protected:
+			virtual void destroy(World* world)
+			{
+				using ComponentAllocator = std::allocator_traits<World::EntityAllocator>::template rebind_alloc<ComponentContainer<T>>;
+
+				ComponentAllocator alloc(world->getPrimaryAllocator());
+				std::allocator_traits<ComponentAllocator>::destroy(alloc, this);
+				std::allocator_traits<ComponentAllocator>::deallocate(alloc, this, 1);
+			}
 		};
 
 
@@ -139,7 +160,7 @@ namespace ECS
 		const static size_t InvalidEntityId = 0;
 
 		// Do not create entities yourself, use World::create().
-		Entity(class World* world, size_t id)
+		Entity(World* world, size_t id)
 			: world(world), id(id)
 		{
 		}
@@ -153,7 +174,7 @@ namespace ECS
 		/**
 		 * Get the world associated with this entity.
 		 */
-		class World* getWorld() const
+		World* getWorld() const
 		{
 			return world;
 		}
@@ -187,6 +208,8 @@ namespace ECS
 		template<typename T, typename... Args>
 		ComponentHandle<T> assign(Args... args)
 		{
+			using ComponentAllocator = std::allocator_traits<World::EntityAllocator>::template rebind_alloc<Internal::ComponentContainer<T>>;
+
 			auto found = components.find(std::type_index(typeid(T)));
 			if (found != components.end())
 			{
@@ -199,7 +222,11 @@ namespace ECS
 			}
 			else
 			{
-				Internal::ComponentContainer<T>* container = new Internal::ComponentContainer<T>();
+				ComponentAllocator alloc(world->getPrimaryAllocator());
+
+				Internal::ComponentContainer<T>* container = std::allocator_traits<ComponentAllocator>::allocate(alloc, 1);
+				std::allocator_traits<ComponentAllocator>::construct(alloc, container);
+
 				container->data = T(args...);
 				components.insert({ std::type_index(typeid(T)), container });
 
@@ -210,12 +237,21 @@ namespace ECS
 		}
 
 		/**
-		 * Remove a component of a specific type.
+		 * Remove a component of a specific type. Returns whether a component was removed.
 		 */
 		template<typename T>
 		bool remove()
 		{
-			return components.erase(std::type_index(typeid(T))) > 0;
+			auto found = components.find(std::type_index(typeid(T)));
+			if (found != components.end())
+			{
+				found->second->destroy(world);
+				components.erase(found);
+
+				return true;
+			}
+
+			return false;
 		}
 
 		/**
@@ -225,7 +261,7 @@ namespace ECS
 		{
 			for (auto pair : components)
 			{
-				delete pair.second;
+				pair.second->destroy(world);
 			}
 
 			components.clear();
@@ -297,14 +333,14 @@ namespace ECS
 		/**
 		 * Called when this system is added to a world.
 		 */
-		virtual void configure(class World* world)
+		virtual void configure(World* world)
 		{
 		}
 
 		/**
 		 * Called when this system is being removed from a world.
 		 */
-		virtual void unconfigure(class World* world)
+		virtual void unconfigure(World* world)
 		{
 		}
 
@@ -313,9 +349,9 @@ namespace ECS
 		 * information about passing data to tick.
 		 */
 #ifdef ECS_TICK_TYPE_VOID
-		virtual void tick(class World* world)
+		virtual void tick(World* world)
 #else
-		virtual void tick(class World* world, ECS_TICK_TYPE data)
+		virtual void tick(World* world, ECS_TICK_TYPE data)
 #endif
 		{
 		}
@@ -334,7 +370,7 @@ namespace ECS
 		/**
 		 * Called when an event is emitted by the world.
 		 */
-		virtual void receive(class World* world, const T& event) = 0;
+		virtual void receive(World* world, const T& event) = 0;
 	};
 
 	namespace Events
@@ -365,7 +401,7 @@ namespace ECS
 		class EntityIterator
 		{
 		public:
-			EntityIterator(class World* world, size_t index, bool bIsEnd, bool bIncludePendingDestroy);
+			EntityIterator(World* world, size_t index, bool bIsEnd, bool bIncludePendingDestroy);
 
 			size_t getIndex() const
 			{
@@ -453,7 +489,7 @@ namespace ECS
 		class EntityComponentIterator
 		{
 		public:
-			EntityComponentIterator(class World* world, size_t index, bool bIsEnd, bool bIncludePendingDestroy)
+			EntityComponentIterator(World* world, size_t index, bool bIsEnd, bool bIncludePendingDestroy)
 				: bIsEnd(bIsEnd), index(index), world(world), bIncludePendingDestroy(bIncludePendingDestroy)
 			{
 				if (index >= world->getCount())
@@ -570,24 +606,25 @@ namespace ECS
 	 * The world creates, destroys, and manages entities. The lifetime of entities and _registered_ systems are handled by the world
 	 * (don't delete a system without unregistering it from the world first!), while event subscribers have their own lifetimes
 	 * (the world doesn't delete them automatically when the world is deleted).
-	 *
-	 * This is just a common interface, the actual world implementation is ECS::Internal::WorldImpl. Don't use it directly.
-	 * Create worlds using ECS::World::createWorld();
 	 */
 	class World
 	{
 	public:
+		using WorldAllocator = std::allocator_traits<Allocator>::template rebind_alloc<World>;
+		using EntityAllocator = std::allocator_traits<Allocator>::template rebind_alloc<Entity>;
+		using SystemAllocator = std::allocator_traits<Allocator>::template rebind_alloc<EntitySystem>;
+		using EntityPtrAllocator = std::allocator_traits<Allocator>::template rebind_alloc<Entity*>;
+		using SystemPtrAllocator = std::allocator_traits<Allocator>::template rebind_alloc<EntitySystem*>;
+		using SubscriberPtrAllocator = std::allocator_traits<Allocator>::template rebind_alloc<Internal::BaseEventSubscriber*>;
+		using SubscriberPairAllocator = std::allocator_traits<Allocator>::template rebind_alloc<std::pair<const std::type_index, std::vector<Internal::BaseEventSubscriber*, SubscriberPtrAllocator>>>;
+
 		/**
 		 * Use this function to construct the world with a custom allocator.
 		 */
-		template<typename Allocator = std::allocator<Entity>>
 		static World* createWorld(Allocator alloc)
 		{
-			using WorldTemplate = Internal::WorldImpl<Allocator>;
-			using WorldAllocator = std::allocator_traits<Allocator>::template rebind_alloc<WorldTemplate>;
-			
 			WorldAllocator worldAlloc(alloc);
-			WorldTemplate* world = std::allocator_traits<WorldAllocator>::allocate(worldAlloc, 1);
+			World* world = std::allocator_traits<WorldAllocator>::allocate(worldAlloc, 1);
 			std::allocator_traits<WorldAllocator>::construct(worldAlloc, world, alloc);
 
 			return world;
@@ -598,22 +635,67 @@ namespace ECS
 		 */
 		static World* createWorld()
 		{
-			return createWorld(std::allocator<Entity>());
+			return createWorld(Allocator());
 		}
 
-		virtual void destroyWorld() = 0;
+		// Use this to destroy the world instead of calling delete.
+		// This will emit OnEntityDestroyed events and call EntitySystem::unconfigure as appropriate.
+		void destroyWorld()
+		{
+			WorldAllocator alloc(entAlloc);
+			std::allocator_traits<WorldAllocator>::destroy(alloc, this);
+			std::allocator_traits<WorldAllocator>::deallocate(alloc, this, 1);
+		}
+
+		World(Allocator alloc)
+			: entAlloc(alloc), systemAlloc(alloc),
+			entities({}, EntityPtrAllocator(alloc)),
+			systems({}, SystemPtrAllocator(alloc)),
+			subscribers({}, 0, std::hash<std::type_index>(), std::equal_to<std::type_index>(), SubscriberPtrAllocator(alloc))
+		{
+		}
 
 		/**
 		 * Destroying the world will emit OnEntityDestroyed events and call EntitySystem::unconfigure() as appropriate.
 		 *
 		 * Use World::destroyWorld to destroy and deallocate the world, do not manually delete the world!
 		 */
-		virtual ~World() {}
+		~World()
+		{
+			for (auto* ent : entities)
+			{
+				if (!ent->isPendingDestroy())
+				{
+					ent->bPendingDestroy = true;
+					emit<Events::OnEntityDestroyed>({ ent });
+				}
+
+				std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
+				std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent, 1);
+			}
+
+			for (auto* system : systems)
+			{
+				system->unconfigure(this);
+				std::allocator_traits<SystemAllocator>::destroy(systemAlloc, system);
+				std::allocator_traits<SystemAllocator>::deallocate(systemAlloc, system, 1);
+			}
+		}
 
 		/**
 		 * Create a new entity. This will emit the OnEntityCreated event.
 		 */
-		virtual Entity* create() = 0;
+		Entity* create()
+		{
+			++lastEntityId;
+			Entity* ent = std::allocator_traits<EntityAllocator>::allocate(entAlloc, 1);
+			std::allocator_traits<EntityAllocator>::construct(entAlloc, ent, this, lastEntityId);
+			entities.push_back(ent);
+
+			emit<Events::OnEntityCreated>({ ent });
+
+			return ent;
+		}
 
 		/**
 		 * Destroy an entity. This will emit the OnEntityDestroy event.
@@ -629,28 +711,94 @@ namespace ECS
 		 *
 		 * A warning: Do not set immediate to true if you are currently iterating through entities!
 		 */
-		virtual void destroy(Entity* ent, bool immediate = false) = 0;
+		void destroy(Entity* ent, bool immediate = false)
+		{
+			if (ent == nullptr)
+				return;
+
+			if (ent->isPendingDestroy())
+			{
+				if (immediate)
+				{
+					entities.erase(std::remove(entities.begin(), entities.end(), ent), entities.end());
+					std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
+					std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent, 1);
+				}
+
+				return;
+			}
+
+			ent->bPendingDestroy = true;
+
+			emit<Events::OnEntityDestroyed>({ ent });
+
+			if (immediate)
+			{
+				entities.erase(std::remove(entities.begin(), entities.end(), ent), entities.end());
+				std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
+				std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent, 1);
+			}
+		}
 
 		/**
 		 * Delete all entities in the pending destroy queue. Returns true if any entities were cleaned up,
 		 * false if there were no entities to clean up.
 		 */
-		virtual bool cleanup() = 0;
+		bool cleanup()
+		{
+			size_t count = 0;
+			entities.erase(std::remove_if(entities.begin(), entities.end(), [&, this](auto* ent) {
+				if (ent->isPendingDestroy())
+				{
+					std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
+					std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent, 1);
+					++count;
+					return true;
+				}
+
+				return false;
+			}), entities.end());
+
+			return count > 0;
+		}
 
 		/**
 		 * Reset the world, destroying all entities. Entity ids will be reset as well.
 		 */
-		virtual void reset() = 0;
+		void reset()
+		{
+			for (auto* ent : entities)
+			{
+				if (!ent->isPendingDestroy())
+				{
+					ent->bPendingDestroy = true;
+					emit<Events::OnEntityDestroyed>({ ent });
+				}
+				std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
+				std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent, 1);
+			}
+
+			entities.clear();
+			lastEntityId = 0;
+		}
 
 		/**
 		 * Register a system. The world will manage the memory of the system unless you unregister the system.
 		 */
-		virtual void registerSystem(EntitySystem* system) = 0;
+		void registerSystem(EntitySystem* system)
+		{
+			systems.push_back(system);
+			system->configure(this);
+		}
 
 		/**
 		 * Unregister a system.
 		 */
-		virtual void unregisterSystem(EntitySystem* system) = 0;
+		void unregisterSystem(EntitySystem* system)
+		{
+			systems.erase(std::remove(systems.begin(), systems.end(), system), systems.end());
+			system->unconfigure(this);
+		}
 
 		/**
 		 * Subscribe to an event.
@@ -658,7 +806,19 @@ namespace ECS
 		template<typename T>
 		void subscribe(EventSubscriber<T>* subscriber)
 		{
-			subscribeInternal(subscriber, typeid(T));
+			auto index = std::type_index(typeid(T));
+			auto found = subscribers.find(index);
+			if (found == subscribers.end())
+			{
+				std::vector<Internal::BaseEventSubscriber*, SubscriberPtrAllocator> subList;
+				subList.push_back(subscriber);
+
+				subscribers.insert({ index, subList });
+			}
+			else
+			{
+				found->second.push_back(subscriber);
+			}
 		}
 
 		/**
@@ -667,13 +827,31 @@ namespace ECS
 		template<typename T>
 		void unsubscribe(EventSubscriber<T>* subscriber)
 		{
-			unsubscribeInternal(subscriber, typeid(T));
+			auto index = std::type_index(typeid(T));
+			if (found != subscribers.end())
+			{
+				found->second.erase(std::remove(found->second.begin(), found->second.end(), subscriber), found->second.end());
+				if (found->second.size() == 0)
+				{
+					subscribers.erase(found);
+				}
+			}
 		}
 
 		/**
 		 * Unsubscribe from all events. Don't be afraid of the void pointer, just pass in your subscriber as normal.
 		 */
-		virtual void unsubscribeAll(void* subscriber) = 0;
+		void unsubscribeAll(void* subscriber)
+		{
+			for (auto kv : subscribers)
+			{
+				kv.second.erase(std::remove(kv.second.begin(), kv.second.end(), subscriber), kv.second.end());
+				if (kv.second.size() == 0)
+				{
+					subscribers.erase(kv.first);
+				}
+			}
+		}
 
 		/**
 		 * Emit an event. This will do nothing if there are no subscribers for the event type.
@@ -681,10 +859,15 @@ namespace ECS
 		template<typename T>
 		void emit(const T& event)
 		{
-			emitInternal(typeid(T), [&, this](Internal::BaseEventSubscriber* base) {
-				auto* sub = reinterpret_cast<EventSubscriber<T>*>(base);
-				sub->receive(this, event);
-			});
+			auto found = subscribers.find(std::type_index(typeid(T)));
+			if (found != subscribers.end())
+			{
+				for (auto* base : found->second)
+				{
+					auto* sub = reinterpret_cast<EventSubscriber<T>*>(base);
+					sub->receive(this, event);
+				}
+			}
 		}
 
 		/**
@@ -731,41 +914,78 @@ namespace ECS
 			return Internal::EntityView(first, last);
 		}
 
-		virtual size_t getCount() const = 0;
+		size_t getCount() const
+		{
+			return entities.size();
+		}
 
-		virtual Entity* getByIndex(size_t idx) const = 0;
+		Entity* getByIndex(size_t idx)
+		{
+			if (idx >= getCount())
+				return nullptr;
+
+			return entities[idx];
+		}
 
 		/**
 		 * Get an entity by an id. This is a slow process.
 		 */
-		virtual Entity* getById(size_t id) const = 0;
+		Entity* getById(size_t id) const
+		{
+			if (id == Entity::InvalidEntityId || id > lastEntityId)
+				return nullptr;
+
+			// We should likely store entities in a map of id -> entity so that this is faster.
+			for (auto* ent : entities)
+			{
+				if (ent->getEntityId() == id)
+					return ent;
+			}
+
+			return nullptr;
+		}
 
 		/**
 		 * Tick the world. See the definition for ECS_TICK_TYPE at the top of this file for more information on
 		 * passing data through tick().
 		 */
 #ifdef ECS_TICK_TYPE_VOID
-		virtual void tick() = 0;
+		void tick()
 #else
-		virtual void tick(ECS_TICK_TYPE data) = 0;
+		void tick(ECS_TICK_TYPE data)
 #endif
-
-	protected:
-		virtual void subscribeInternal(Internal::BaseEventSubscriber* subscriber, const std::type_info& typeInfo) = 0;
-		virtual void unsubscribeInternal(Internal::BaseEventSubscriber* subscriber, const std::type_info& typeInfo) = 0;
-
-		// This is a workaround, need to find a better way to do this later.
-		virtual void emitInternal(const std::type_info& typeInfo, std::function<void(Internal::BaseEventSubscriber*)> func) = 0;
-
-		static bool isEntityPendingDestroy(Entity* ent)
 		{
-			return ent->bPendingDestroy;
+#ifndef ECS_TICK_NO_CLEANUP
+			cleanup();
+#endif
+			for (auto* system : systems)
+			{
+#ifdef ECS_TICK_TYPE_VOID
+				system->tick(this);
+#else
+				system->tick(this, data);
+#endif
+			}
 		}
 
-		static void setEntityPendingDestroy(Entity* ent, bool bPendingDestroy)
+		EntityAllocator& getPrimaryAllocator()
 		{
-			ent->bPendingDestroy = bPendingDestroy;
+			return entAlloc;
 		}
+
+	private:
+		EntityAllocator entAlloc;
+		SystemAllocator systemAlloc;
+
+		std::vector<Entity*, EntityPtrAllocator> entities;
+		std::vector<EntitySystem*, SystemPtrAllocator> systems;
+		std::unordered_map<std::type_index,
+			std::vector<Internal::BaseEventSubscriber*>,
+			std::hash<std::type_index>,
+			std::equal_to<std::type_index>,
+			SubscriberPairAllocator> subscribers;
+
+		size_t lastEntityId = 0;
 	};
 
 	namespace Internal
@@ -803,268 +1023,5 @@ namespace ECS
 
 			return *this;
 		}
-
-		/**
-		 * Templated implementation for the world. This exists so we can have a common interface to the world (ECS::World) without
-		 * having to also template entities, systems, etc. The default template uses standard allocators.
-		 */
-		template<typename Allocator = std::allocator<Entity>>
-		class WorldImpl : public ECS::World
-		{
-		public:
-			using WorldAllocator = std::allocator_traits<Allocator>::template rebind_alloc<WorldImpl<Allocator>>;
-			using EntityAllocator = std::allocator_traits<Allocator>::template rebind_alloc<Entity>;
-			using SystemAllocator = std::allocator_traits<Allocator>::template rebind_alloc<EntitySystem>;
-			using EntityPtrAllocator = std::allocator_traits<Allocator>::template rebind_alloc<Entity*>;
-			using SystemPtrAllocator = std::allocator_traits<Allocator>::template rebind_alloc<EntitySystem*>;
-			using SubscriberPtrAllocator = std::allocator_traits<Allocator>::template rebind_alloc<BaseEventSubscriber*>;
-			using SubscriberPairAllocator = std::allocator_traits<Allocator>::template rebind_alloc<std::pair<const std::type_index, std::vector<BaseEventSubscriber*, SubscriberPtrAllocator>>>;
-
-			WorldImpl(Allocator alloc)
-				: entAlloc(alloc), systemAlloc(alloc),
-				entities({}, EntityPtrAllocator(alloc)),
-				systems({}, SystemPtrAllocator(alloc)),
-				subscribers({}, 0, std::hash<std::type_index>(), std::equal_to<std::type_index>(), SubscriberPairAllocator(alloc))
-			{
-			}
-
-			virtual ~WorldImpl()
-			{
-				for (auto* ent : entities)
-				{
-					if (!isEntityPendingDestroy(ent))
-					{
-						setEntityPendingDestroy(ent, true);
-						emit<Events::OnEntityDestroyed>({ ent });
-					}
-
-					std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
-					std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent, 1);
-				}
-
-				for (auto* system : systems)
-				{
-					system->unconfigure(this);
-					std::allocator_traits<SystemAllocator>::destroy(systemAlloc, system);
-					std::allocator_traits<SystemAllocator>::deallocate(systemAlloc, system, 1);
-				}
-			}
-
-			virtual void destroyWorld() override
-			{
-				WorldAllocator alloc(entAlloc);
-				std::allocator_traits<WorldAllocator>::destroy(alloc, this);
-				std::allocator_traits<WorldAllocator>::deallocate(alloc, this, 1);
-			}
-
-			virtual Entity* create() override
-			{
-				++lastEntityId;
-				Entity* ent = std::allocator_traits<EntityAllocator>::allocate(entAlloc, 1);
-				std::allocator_traits<EntityAllocator>::construct(entAlloc, ent, this, lastEntityId);
-				entities.push_back(ent);
-
-				emit<Events::OnEntityCreated>({ ent });
-
-				return ent;
-			}
-
-			virtual void destroy(Entity* ent, bool immediate = false) override
-			{
-				if (ent == nullptr)
-					return;
-
-				if (ent->isPendingDestroy())
-				{
-					if (immediate)
-					{
-						entities.erase(std::remove(entities.begin(), entities.end(), ent), entities.end());
-						std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
-						std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent, 1);
-					}
-
-					return;
-				}
-
-				setEntityPendingDestroy(ent, true);
-
-				emit<Events::OnEntityDestroyed>({ ent });
-
-				if (immediate)
-				{
-					entities.erase(std::remove(entities.begin(), entities.end(), ent), entities.end());
-					std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
-					std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent, 1);
-				}
-			}
-
-			virtual bool cleanup() override
-			{
-				size_t count = 0;
-				entities.erase(std::remove_if(entities.begin(), entities.end(), [&, this](auto* ent) {
-					if (ent->isPendingDestroy())
-					{
-						std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
-						std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent, 1);
-						++count;
-						return true;
-					}
-
-					return false;
-				}), entities.end());
-
-				return count > 0;
-			}
-
-			virtual void reset() override
-			{
-				for (auto* ent : entities)
-				{
-					if (!isEntityPendingDestroy(ent))
-					{
-						setEntityPendingDestroy(ent, true);
-						emit<Events::OnEntityDestroyed>({ ent });
-					}
-					std::allocator_traits<EntityAllocator>::destroy(entAlloc, ent);
-					std::allocator_traits<EntityAllocator>::deallocate(entAlloc, ent, 1);
-				}
-
-				entities.clear();
-				lastEntityId = 0;
-			}
-
-			virtual void registerSystem(EntitySystem* system) override
-			{
-				systems.push_back(system);
-				system->configure(this);
-			}
-
-			void unregisterSystem(EntitySystem* system) override
-			{
-				systems.erase(std::remove(systems.begin(), systems.end(), system), systems.end());
-				system->unconfigure(this);
-			}
-
-			virtual void unsubscribeAll(void* subscriber) override
-			{
-				for (auto kv : subscribers)
-				{
-					kv.second.erase(std::remove(kv.second.begin(), kv.second.end(), subscriber), kv.second.end());
-					if (kv.second.size() == 0)
-					{
-						subscribers.erase(kv.first);
-					}
-				}
-			}
-
-			virtual size_t getCount() const override
-			{
-				return entities.size();
-			}
-
-			virtual Entity* getByIndex(size_t idx) const override
-			{
-				if (idx >= getCount())
-					return nullptr;
-
-				return entities[idx];
-			}
-
-			virtual Entity* getById(size_t id) const override
-			{
-				if (id == Entity::InvalidEntityId || id > lastEntityId)
-					return nullptr;
-
-				// We should likely store entities in a map of id -> entity so that this is faster.
-				for (auto* ent : entities)
-				{
-					if (ent->getEntityId() == id)
-						return ent;
-				}
-
-				return nullptr;
-			}
-
-#ifdef ECS_TICK_TYPE_VOID
-			virtual void tick() override
-#else
-			virtual void tick(ECS_TICK_TYPE data) override
-#endif
-			{
-#ifndef ECS_TICK_NO_CLEANUP
-				cleanup();
-#endif
-
-				for (auto* system : systems)
-				{
-#ifdef ECS_TICK_TYPE_VOID
-					system->tick(this);
-#else
-					system->tick(this, data);
-#endif
-				}
-			}
-
-			EntityAllocator& getPrimaryAllocator()
-			{
-				return entAlloc;
-			}
-
-		protected:
-			virtual void subscribeInternal(BaseEventSubscriber* subscriber, const std::type_info& typeInfo) override
-			{
-				auto found = subscribers.find(std::type_index(typeInfo));
-				if (found == subscribers.end())
-				{
-					std::vector<BaseEventSubscriber*, SubscriberPtrAllocator> subList;
-					subList.push_back(subscriber);
-
-					subscribers.insert({ std::type_index(typeInfo), subList });
-				}
-				else
-				{
-					found->second.push_back(subscriber);
-				}
-			}
-
-			virtual void unsubscribeInternal(Internal::BaseEventSubscriber* subscriber, const std::type_info& typeInfo) override
-			{
-				auto found = subscribers.find(std::type_index(typeInfo));
-				if (found != subscribers.end())
-				{
-					found->second.erase(std::remove(found->second.begin(), found->second.end(), subscriber), found->second.end());
-					if (found->second.size() == 0)
-					{
-						subscribers.erase(found);
-					}
-				}
-			}
-
-			virtual void emitInternal(const std::type_info& typeInfo, std::function<void(Internal::BaseEventSubscriber*)> func) override
-			{
-				auto found = subscribers.find(std::type_index(typeInfo));
-				if (found != subscribers.end())
-				{
-					for (auto* base : found->second)
-					{
-						func(base);
-					}
-				}
-			}
-
-		private:
-			EntityAllocator entAlloc;
-			SystemAllocator systemAlloc;
-
-			std::vector<Entity*, EntityPtrAllocator> entities;
-			std::vector<EntitySystem*, SystemPtrAllocator> systems;
-			std::unordered_map<std::type_index,
-				std::vector<Internal::BaseEventSubscriber*>,
-				std::hash<std::type_index>,
-				std::equal_to<std::type_index>,
-				SubscriberPairAllocator> subscribers;
-
-			size_t lastEntityId = 0;
-		};
 	}
 }
