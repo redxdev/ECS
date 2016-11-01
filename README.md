@@ -112,16 +112,21 @@ Now you can call the tick function on the world in order to tick all systems tha
 
     world->tick(deltaTime);
 	
-Once you are done with the world, make sure to destroy it!
+Once you are done with the world, make sure to destroy it (this will also deallocate the world).
 
     world->destroy();
 	
 #### Custom Allocators
 
-You may use any standards-compliant custom allocator. The world handles all allocations for entities and components, and you may
-pass it a custom allocator like so:
+You may use any standards-compliant custom allocator. The world handles all allocations and deallocations for entities and components.
 
-    World* world = World::createWorld<MyCustomAllocatorType<Entity>>(myCustomAllocator);
+In order to use a custom allocator, define `ECS_ALLOCATOR_TYPE` before including `ECS.h`:
+
+    #define ECS_ALLOCATOR_TYPE MyAllocator<Entity>
+	#include "ECS.h"
+
+Allocators must have a default constructor. When creating the world with `World::createWorld`, you may pass in your custom
+allocator if you need to initialize it first. Additionally, custom allocators must be rebindable via `std::allocator_traits`.
 
 The default implementation uses `std::allocator<Entity>`. Note that the world will rebind allocators for different types.
 
