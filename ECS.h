@@ -82,6 +82,7 @@ namespace ECS
 		struct ComponentContainer : public BaseComponentContainer
 		{
 			ComponentContainer() {}
+			ComponentContainer(const T& data) : data(data) {}
 
 			T data;
 			
@@ -225,9 +226,8 @@ namespace ECS
 				ComponentAllocator alloc(world->getPrimaryAllocator());
 
 				Internal::ComponentContainer<T>* container = std::allocator_traits<ComponentAllocator>::allocate(alloc, 1);
-				std::allocator_traits<ComponentAllocator>::construct(alloc, container);
+				std::allocator_traits<ComponentAllocator>::construct(alloc, container, T(args...));
 
-				container->data = T(args...);
 				components.insert({ std::type_index(typeid(T)), container });
 
 				auto handle = ComponentHandle<T>(&container->data);
