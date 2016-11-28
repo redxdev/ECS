@@ -206,7 +206,7 @@ namespace ECS
 		 * any of the above, wrap it in a struct.
 		 */
 		template<typename T, typename... Args>
-		ComponentHandle<T> assign(Args... args)
+		ComponentHandle<T> assign(Args&&... args)
 		{
 			using ComponentAllocator = std::allocator_traits<World::EntityAllocator>::template rebind_alloc<Internal::ComponentContainer<T>>;
 
