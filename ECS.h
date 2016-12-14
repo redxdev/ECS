@@ -66,10 +66,10 @@ SOFTWARE.
 #else
 
 #define ECS_TYPE_IMPLEMENTATION \
+	ECS::TypeIndex ECS::Internal::TypeRegistry::nextIndex = 1; \
+	\
 	ECS_DEFINE_TYPE(ECS::Events::OnEntityCreated);\
 	ECS_DEFINE_TYPE(ECS::Events::OnEntityDestroyed); \
-	template<typename T> \
-	ECS_DEFINE_TYPE(ECS::Events::OnComponentAssigned<T>);
 
 #endif
 
@@ -114,8 +114,6 @@ namespace ECS
 			static TypeIndex nextIndex;
 			TypeIndex index;
 		};
-
-		TypeIndex TypeRegistry::nextIndex = 1;
 	}
 
 #define ECS_DECLARE_TYPE public: static ECS::Internal::TypeRegistry __ecs_type_reg
@@ -467,6 +465,11 @@ namespace ECS
 			Entity* entity;
 			ComponentHandle<T> component;
 		};
+
+#ifdef ECS_NO_RTTI
+		template<typename T>
+		ECS_DEFINE_TYPE(ECS::Events::OnComponentAssigned<T>);
+#endif
 	}
 
 	namespace Internal
