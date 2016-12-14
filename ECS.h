@@ -55,7 +55,7 @@ SOFTWARE.
 
 // Define ECS_NO_RTTI to turn off RTTI. This requires using the ECS_DEFINE_TYPE and ECS_DECLARE_TYPE macros on all types
 // that you wish to use as components or events.
-#define ECS_NO_RTTI
+//#define ECS_NO_RTTI
 
 #ifndef ECS_NO_RTTI
 #include <typeindex>
