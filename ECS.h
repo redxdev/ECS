@@ -22,8 +22,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#include <typeindex>
-#include <typeinfo>
 #include <unordered_map>
 #include <functional>
 #include <vector>
@@ -55,12 +53,70 @@ SOFTWARE.
 // leaks.
 //#define ECS_TICK_NO_CLEANUP
 
+// Define ECS_NO_RTTI to turn off RTTI. This requires using the ECS_DEFINE_TYPE and ECS_DECLARE_TYPE macros on all types
+// that you wish to use as components or events.
+#define ECS_NO_RTTI
+
+#ifndef ECS_NO_RTTI
+#include <typeindex>
+#include <typeinfo>
+#endif
+
 //////////////////////////////////////////////////////////////////////////
 // CODE //
 //////////////////////////////////////////////////////////////////////////
 
 namespace ECS
 {
+#ifndef ECS_NO_RTTI
+	typedef std::type_index TypeIndex;
+
+#define ECS_DECLARE_TYPE
+#define ECS_DEFINE_TYPE(name)
+
+	template<typename T>
+	TypeIndex getTypeIndex()
+	{
+		return std::type_index(typeid(T));
+	}
+
+#else
+	typedef uint32_t TypeIndex;
+
+	namespace Internal
+	{
+		class TypeRegistry
+		{
+		public:
+			TypeRegistry()
+			{
+				index = nextIndex;
+				++nextIndex;
+			}
+
+			TypeIndex getIndex() const
+			{
+				return index;
+			}
+
+		private:
+			static TypeIndex nextIndex;
+			TypeIndex index;
+		};
+
+		TypeIndex TypeRegistry::nextIndex = 1;
+	}
+
+#define ECS_DECLARE_TYPE public: static ECS::Internal::TypeRegistry __ecs_type_reg
+#define ECS_DEFINE_TYPE(name) ECS::Internal::TypeRegistry name::__ecs_type_reg
+
+	template<typename T>
+	TypeIndex getTypeIndex()
+	{
+		return T::__ecs_type_reg.getIndex();
+	}
+#endif
+
 	class World;
 	class Entity;
 
@@ -186,7 +242,7 @@ namespace ECS
 		template<typename T>
 		bool has() const
 		{
-			auto index = std::type_index(typeid(T));
+			auto index = getTypeIndex<T>();
 			return components.find(index) != components.end();
 		}
 
@@ -211,7 +267,7 @@ namespace ECS
 		{
 			using ComponentAllocator = std::allocator_traits<World::EntityAllocator>::template rebind_alloc<Internal::ComponentContainer<T>>;
 
-			auto found = components.find(std::type_index(typeid(T)));
+			auto found = components.find(getTypeIndex<T>());
 			if (found != components.end())
 			{
 				Internal::ComponentContainer<T>* container = reinterpret_cast<Internal::ComponentContainer<T>*>(found->second);
@@ -228,7 +284,7 @@ namespace ECS
 				Internal::ComponentContainer<T>* container = std::allocator_traits<ComponentAllocator>::allocate(alloc, 1);
 				std::allocator_traits<ComponentAllocator>::construct(alloc, container, T(args...));
 
-				components.insert({ std::type_index(typeid(T)), container });
+				components.insert({ getTypeIndex<T>(), container });
 
 				auto handle = ComponentHandle<T>(&container->data);
 				world->emit<Events::OnComponentAssigned<T>>({ this, handle });
@@ -242,7 +298,7 @@ namespace ECS
 		template<typename T>
 		bool remove()
 		{
-			auto found = components.find(std::type_index(typeid(T)));
+			auto found = components.find(getTypeIndex<T>());
 			if (found != components.end())
 			{
 				found->second->destroy(world);
@@ -273,7 +329,7 @@ namespace ECS
 		template<typename T>
 		ComponentHandle<T> get()
 		{
-			auto found = components.find(std::type_index(typeid(T)));
+			auto found = components.find(getTypeIndex<T>());
 			if (found != components.end())
 			{
 				return ComponentHandle<T>(&reinterpret_cast<Internal::ComponentContainer<T>*>(found->second)->data);
@@ -312,7 +368,7 @@ namespace ECS
 		}
 
 	private:
-		std::unordered_map<std::type_index, Internal::BaseComponentContainer*> components;
+		std::unordered_map<TypeIndex, Internal::BaseComponentContainer*> components;
 		World* world;
 
 		size_t id;
@@ -378,22 +434,35 @@ namespace ECS
 		// Called when a new entity is created.
 		struct OnEntityCreated
 		{
+			ECS_DECLARE_TYPE;
+
 			Entity* entity;
 		};
+
+		ECS_DEFINE_TYPE(OnEntityCreated);
 
 		// Called when an entity is about to be destroyed.
 		struct OnEntityDestroyed
 		{
+			ECS_DECLARE_TYPE;
+
 			Entity* entity;
 		};
+
+		ECS_DEFINE_TYPE(OnEntityDestroyed);
 
 		// Called when a component is assigned (not necessarily created).
 		template<typename T>
 		struct OnComponentAssigned
 		{
+			ECS_DECLARE_TYPE;
+
 			Entity* entity;
 			ComponentHandle<T> component;
 		};
+
+		template<typename T>
+		ECS_DEFINE_TYPE(OnComponentAssigned<T>);
 	}
 
 	namespace Internal
@@ -616,7 +685,7 @@ namespace ECS
 		using EntityPtrAllocator = std::allocator_traits<Allocator>::template rebind_alloc<Entity*>;
 		using SystemPtrAllocator = std::allocator_traits<Allocator>::template rebind_alloc<EntitySystem*>;
 		using SubscriberPtrAllocator = std::allocator_traits<Allocator>::template rebind_alloc<Internal::BaseEventSubscriber*>;
-		using SubscriberPairAllocator = std::allocator_traits<Allocator>::template rebind_alloc<std::pair<const std::type_index, std::vector<Internal::BaseEventSubscriber*, SubscriberPtrAllocator>>>;
+		using SubscriberPairAllocator = std::allocator_traits<Allocator>::template rebind_alloc<std::pair<const TypeIndex, std::vector<Internal::BaseEventSubscriber*, SubscriberPtrAllocator>>>;
 
 		/**
 		* Use this function to construct the world with a custom allocator.
@@ -651,7 +720,7 @@ namespace ECS
 			: entAlloc(alloc), systemAlloc(alloc),
 			entities({}, EntityPtrAllocator(alloc)),
 			systems({}, SystemPtrAllocator(alloc)),
-			subscribers({}, 0, std::hash<std::type_index>(), std::equal_to<std::type_index>(), SubscriberPtrAllocator(alloc))
+			subscribers({}, 0, std::hash<TypeIndex>(), std::equal_to<TypeIndex>(), SubscriberPtrAllocator(alloc))
 		{
 		}
 
@@ -806,7 +875,7 @@ namespace ECS
 		template<typename T>
 		void subscribe(EventSubscriber<T>* subscriber)
 		{
-			auto index = std::type_index(typeid(T));
+			auto index = getTypeIndex<T>();
 			auto found = subscribers.find(index);
 			if (found == subscribers.end())
 			{
@@ -827,7 +896,7 @@ namespace ECS
 		template<typename T>
 		void unsubscribe(EventSubscriber<T>* subscriber)
 		{
-			auto index = std::type_index(typeid(T));
+			auto index = getTypeIndex<T>();
 			if (found != subscribers.end())
 			{
 				found->second.erase(std::remove(found->second.begin(), found->second.end(), subscriber), found->second.end());
@@ -859,7 +928,7 @@ namespace ECS
 		template<typename T>
 		void emit(const T& event)
 		{
-			auto found = subscribers.find(std::type_index(typeid(T)));
+			auto found = subscribers.find(getTypeIndex<T>());
 			if (found != subscribers.end())
 			{
 				for (auto* base : found->second)
@@ -979,10 +1048,10 @@ namespace ECS
 
 		std::vector<Entity*, EntityPtrAllocator> entities;
 		std::vector<EntitySystem*, SystemPtrAllocator> systems;
-		std::unordered_map<std::type_index,
+		std::unordered_map<TypeIndex,
 			std::vector<Internal::BaseEventSubscriber*, SubscriberPtrAllocator>,
-			std::hash<std::type_index>,
-			std::equal_to<std::type_index>,
+			std::hash<TypeIndex>,
+			std::equal_to<TypeIndex>,
 			SubscriberPairAllocator> subscribers;
 
 		size_t lastEntityId = 0;

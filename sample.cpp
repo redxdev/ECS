@@ -28,6 +28,8 @@ using namespace ECS;
 
 struct Position
 {
+	ECS_DECLARE_TYPE;
+
 	Position(float x, float y) : x(x), y(y) {}
 	Position() {}
 
@@ -35,23 +37,37 @@ struct Position
 	float y;
 };
 
+ECS_DEFINE_TYPE(Position);
+
 struct Rotation
 {
+	ECS_DECLARE_TYPE;
+
 	Rotation(float angle) : angle(angle) {}
 	Rotation() {}
 
 	float angle;
 };
 
+ECS_DEFINE_TYPE(Rotation);
+
 struct SomeComponent
 {
+	ECS_DECLARE_TYPE;
+
 	SomeComponent() {}
 };
 
+ECS_DEFINE_TYPE(SomeComponent);
+
 struct SomeEvent
 {
+	ECS_DECLARE_TYPE;
+
 	int num;
 };
+
+ECS_DEFINE_TYPE(SomeEvent);
 
 class TestSystem : public EntitySystem,
 	public EventSubscriber<Events::OnEntityCreated>,

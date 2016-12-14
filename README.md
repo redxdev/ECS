@@ -222,3 +222,36 @@ There are a handful of built-in events. Here is the list:
   * `OnComponentAssigned` - called when a component is assigned to an entity. This might mean the component is new to the entity, or there's just a new assignment of the component to that entity overwriting an old one.
 
 There is no `OnComponentRemoved` event as of this time.
+
+## Avoiding RTTI
+
+If you wish to avoid using RTTI for any reason, you may define the ECS_NO_RTTI macro before including
+ECS.h. When doing so, you must also add a couple of macros to your component and event types:
+
+    // in a header somewhere
+	struct MyComponent
+	{
+		ECS_DECLARE_TYPE; // add this at the top of the structure, make sure to include the semicolon!
+
+		// ...
+	};
+
+	// in a cpp somewhere
+	ECS_DEFINE_TYPE(MyComponent);
+
+Again, make sure you do this with events as well.
+
+If you have any templated events, you may do the following:
+
+	template<typename T>
+    struct MyEvent
+	{
+		ECS_DECLARE_TYPE;
+
+		T someField;
+
+		// ...
+	}
+
+	template<typename T>
+	ECS_DEFINE_TYPE(MyEvent<T>);
