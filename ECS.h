@@ -461,8 +461,10 @@ namespace ECS
 			ComponentHandle<T> component;
 		};
 
+#ifdef ECS_NO_RTTI
 		template<typename T>
 		ECS_DEFINE_TYPE(OnComponentAssigned<T>);
+#endif
 	}
 
 	namespace Internal
