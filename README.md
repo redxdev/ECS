@@ -241,6 +241,11 @@ ECS.h. When doing so, you must also add a couple of macros to your component and
 
 Again, make sure you do this with events as well.
 
+Additionally, you will have to put the following in a cpp file:
+
+    #include "ECS.h"
+	ECS_TYPE_IMPLEMENTATION;
+
 If you have any templated events, you may do the following:
 
 	template<typename T>

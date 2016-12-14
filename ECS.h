@@ -54,12 +54,23 @@ SOFTWARE.
 //#define ECS_TICK_NO_CLEANUP
 
 // Define ECS_NO_RTTI to turn off RTTI. This requires using the ECS_DEFINE_TYPE and ECS_DECLARE_TYPE macros on all types
-// that you wish to use as components or events.
+// that you wish to use as components or events. If you use ECS_NO_RTTI, also place ECS_TYPE_IMPLEMENTATION in a single cpp file.
 //#define ECS_NO_RTTI
 
 #ifndef ECS_NO_RTTI
+
 #include <typeindex>
 #include <typeinfo>
+#define ECS_TYPE_IMPLEMENTATION
+
+#else
+
+#define ECS_TYPE_IMPLEMENTATION \
+	ECS_DEFINE_TYPE(ECS::Events::OnEntityCreated);\
+	ECS_DEFINE_TYPE(ECS::Events::OnEntityDestroyed); \
+	template<typename T> \
+	ECS_DEFINE_TYPE(ECS::Events::OnComponentAssigned<T>);
+
 #endif
 
 //////////////////////////////////////////////////////////////////////////
@@ -439,8 +450,6 @@ namespace ECS
 			Entity* entity;
 		};
 
-		ECS_DEFINE_TYPE(OnEntityCreated);
-
 		// Called when an entity is about to be destroyed.
 		struct OnEntityDestroyed
 		{
@@ -448,8 +457,6 @@ namespace ECS
 
 			Entity* entity;
 		};
-
-		ECS_DEFINE_TYPE(OnEntityDestroyed);
 
 		// Called when a component is assigned (not necessarily created).
 		template<typename T>
@@ -460,11 +467,6 @@ namespace ECS
 			Entity* entity;
 			ComponentHandle<T> component;
 		};
-
-#ifdef ECS_NO_RTTI
-		template<typename T>
-		ECS_DEFINE_TYPE(OnComponentAssigned<T>);
-#endif
 	}
 
 	namespace Internal

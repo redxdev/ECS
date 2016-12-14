@@ -24,6 +24,8 @@ SOFTWARE.
 
 #include "ECS.h"
 
+ECS_TYPE_IMPLEMENTATION;
+
 using namespace ECS;
 
 struct Position
