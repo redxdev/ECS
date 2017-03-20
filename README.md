@@ -5,6 +5,8 @@ constructs, so make sure you have an up to date compiler. It isn't meant to do a
 so please feel free to modify it when using. There's a VS2015 solution provided, but it should
 compile on any standard compiler with C++11 support.
 
+Again, this is meant for quick prototyping or as a starting point for a more advanced ECS toolkit. It works and it works well, but it isn't optimized for speed or anything.
+
 ## Tutorial
 
 This ECS library is based on the [Evolve Your Hierarchy](http://cowboyprogramming.com/2007/01/05/evolve-your-heirachy/) article. If you haven't read it, please do or else things won't make much sense. This is a data-driven entity component system library, and to know how to work with it you need to know what that entails (this is _not_ the same as Unity's components so don't expect it to be).
