@@ -93,7 +93,7 @@ public:
 
 	virtual void tick(class World* world, float deltaTime) override
 	{
-		world->each<Position, Rotation>([&](Entity* ent, auto pos, auto rot) {
+		world->each<Position, Rotation>([&](Entity* ent, ComponentHandle<Position> pos, ComponentHandle<Rotation> rot) -> void {
 			pos->x += deltaTime;
 			pos->y += deltaTime;
 			rot->angle += deltaTime * 2;
@@ -115,7 +115,7 @@ public:
 		std::cout << "I received SomeEvent with value " << event.num << "!" << std::endl;
 
 		// Let's delete an entity while iterating because why not?
-		world->all([&](auto* ent) {
+		world->all([&](Entity* ent) {
 			if (ent->getEntityId() + 1 == event.num)
 				world->destroy(world->getById(event.num));
 

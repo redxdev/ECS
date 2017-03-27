@@ -3,9 +3,15 @@
 This is a simple C++ header-only type-safe entity component system library. It makes heavy use of C++11
 constructs, so make sure you have an up to date compiler. It isn't meant to do absolutely everything,
 so please feel free to modify it when using. There's a VS2015 solution provided, but it should
-compile on any standard compiler with C++11 support.
+compile on any standard compiler with C++11 support (C++14 is more ideal, however, as it lets you use `auto`
+parameters in lambdas).
 
 Again, this is meant for quick prototyping or as a starting point for a more advanced ECS toolkit. It works and it works well, but it isn't optimized for speed or anything.
+
+This has been tested on the following compilers:
+
+* Visual Studio 2015 on Windows 10 (x64)
+* G++ 5.4.1 (using -std=c++11 and -std=c++14) on Ubuntu 14.04 (x64)
 
 ## Tutorial
 
