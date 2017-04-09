@@ -889,7 +889,7 @@ namespace ECS
 		};
 	}
 
-	World::~World()
+	inline World::~World()
 	{
 		for (auto* ent : entities)
 		{
@@ -911,7 +911,7 @@ namespace ECS
 		}
 	}
 
-	void World::destroy(Entity* ent, bool immediate)
+	inline void World::destroy(Entity* ent, bool immediate)
 	{
 		if (ent == nullptr)
 			return;
@@ -940,7 +940,7 @@ namespace ECS
 		}
 	}
 
-	bool World::cleanup()
+	inline bool World::cleanup()
 	{
 		size_t count = 0;
 		entities.erase(std::remove_if(entities.begin(), entities.end(), [&, this](Entity* ent) {
@@ -958,7 +958,7 @@ namespace ECS
 		return count > 0;
 	}
 
-	void World::reset()
+	inline void World::reset()
 	{
 		for (auto* ent : entities)
 		{
@@ -975,7 +975,7 @@ namespace ECS
 		lastEntityId = 0;
 	}
 
-	void World::all(std::function<void(Entity*)> viewFunc, bool bIncludePendingDestroy)
+	inline void World::all(std::function<void(Entity*)> viewFunc, bool bIncludePendingDestroy)
 	{
 		for (auto* ent : all(bIncludePendingDestroy))
 		{
@@ -983,14 +983,14 @@ namespace ECS
 		}
 	}
 
-	Internal::EntityView World::all(bool bIncludePendingDestroy)
+	inline Internal::EntityView World::all(bool bIncludePendingDestroy)
 	{
 		Internal::EntityIterator first(this, 0, false, bIncludePendingDestroy);
 		Internal::EntityIterator last(this, getCount(), true, bIncludePendingDestroy);
 		return Internal::EntityView(first, last);
 	}
 
-	Entity* World::getById(size_t id) const
+	inline Entity* World::getById(size_t id) const
 	{
 		if (id == Entity::InvalidEntityId || id > lastEntityId)
 			return nullptr;
@@ -1060,19 +1060,19 @@ namespace ECS
 
 	namespace Internal
 	{
-		EntityIterator::EntityIterator(class World* world, size_t index, bool bIsEnd, bool bIncludePendingDestroy)
+		inline EntityIterator::EntityIterator(class World* world, size_t index, bool bIsEnd, bool bIncludePendingDestroy)
 			: bIsEnd(bIsEnd), index(index), world(world), bIncludePendingDestroy(bIncludePendingDestroy)
 		{
 			if (index >= world->getCount())
 				this->bIsEnd = true;
 		}
 
-		bool EntityIterator::isEnd() const
+		inline bool EntityIterator::isEnd() const
 		{
 			return bIsEnd || index >= world->getCount();
 		}
 
-		Entity* EntityIterator::get() const
+		inline Entity* EntityIterator::get() const
 		{
 			if (isEnd())
 				return nullptr;
@@ -1080,7 +1080,7 @@ namespace ECS
 			return world->getByIndex(index);
 		}
 
-		EntityIterator& EntityIterator::operator++()
+		inline EntityIterator& EntityIterator::operator++()
 		{
 			++index;
 			while (index < world->getCount() && (get() == nullptr || (get()->isPendingDestroy() && !bIncludePendingDestroy)))
