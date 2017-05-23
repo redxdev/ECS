@@ -13,6 +13,8 @@ This has been tested on the following compilers:
 * Visual Studio 2015 on Windows 10 (x64)
 * G++ 5.4.1 (using -std=c++11 and -std=c++14) on Ubuntu 14.04 (x64)
 
+Contributions are welcome! Submit a pull request, or if you find a problem (or have a feature request) make a new issue!
+
 ## Tutorial
 
 This ECS library is based on the [Evolve Your Hierarchy](http://cowboyprogramming.com/2007/01/05/evolve-your-heirachy/) article. If you haven't read it, please do or else things won't make much sense. This is a data-driven entity component system library, and to know how to work with it you need to know what that entails (this is _not_ the same as Unity's components so don't expect it to be).
