@@ -124,7 +124,7 @@ Now you can call the tick function on the world in order to tick all systems tha
 	
 Once you are done with the world, make sure to destroy it (this will also deallocate the world).
 
-    world->destroy();
+    world->destroyWorld();
 	
 #### Custom Allocators
 
