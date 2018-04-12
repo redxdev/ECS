@@ -1052,10 +1052,8 @@ namespace ECS
 		{
 			return ComponentHandle<T>(&reinterpret_cast<Internal::ComponentContainer<T>*>(found->second)->data);
 		}
-		else
-		{
-			return ComponentHandle<T>(nullptr);
-		}
+	
+		return ComponentHandle<T>();
 	}
 
 	namespace Internal
