@@ -144,6 +144,8 @@ namespace ECS
 		struct BaseComponentContainer
 		{
 		public:
+			virtual ~BaseComponentContainer() { }
+
 			// This should only ever be called by the entity itself.
 			virtual void destroy(World* world) = 0;
 		};
@@ -221,12 +223,12 @@ namespace ECS
 		public:
 			EntityComponentView(const EntityComponentIterator<Types...>& first, const EntityComponentIterator<Types...>& last);
 
-			EntityComponentIterator<Types...> begin()
+			const EntityComponentIterator<Types...>& begin() const
 			{
 				return firstItr;
 			}
 
-			EntityComponentIterator<Types...> end()
+			const EntityComponentIterator<Types...>& end() const
 			{
 				return lastItr;
 			}
@@ -360,6 +362,16 @@ namespace ECS
 			Entity* entity;
 			ComponentHandle<T> component;
 		};
+
+		// Called when a component is removed
+		template<typename T>
+		struct OnComponentRemoved
+		{
+			ECS_DECLARE_TYPE;
+
+			Entity* entity;
+			ComponentHandle<T> component;
+	};
 
 #ifdef ECS_NO_RTTI
 		template<typename T>
@@ -717,6 +729,10 @@ namespace ECS
 			auto found = components.find(getTypeIndex<T>());
 			if (found != components.end())
 			{
+
+				auto handle = ComponentHandle<T>(&found->second->data);
+				world->emit<Events::OnComponentRemoved<T>>({ this, handle });
+
 				found->second->destroy(world);
 				components.erase(found);
 
@@ -854,12 +870,12 @@ namespace ECS
 				}
 			}
 
-			EntityIterator begin()
+			const EntityIterator& begin() const
 			{
 				return firstItr;
 			}
 
-			EntityIterator end()
+			const EntityIterator& end() const
 			{
 				return lastItr;
 			}

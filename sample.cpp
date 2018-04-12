@@ -74,6 +74,7 @@ ECS_DEFINE_TYPE(SomeEvent);
 class TestSystem : public EntitySystem,
 	public EventSubscriber<Events::OnEntityCreated>,
 	public EventSubscriber<Events::OnEntityDestroyed>,
+	public EventSubscriber<Events::OnComponentRemoved>,
 	public EventSubscriber<SomeEvent>
 {
 public:
@@ -83,6 +84,7 @@ public:
 	{
 		world->subscribe<Events::OnEntityCreated>(this);
 		world->subscribe<Events::OnEntityDestroyed>(this);
+		world->subscribe<Events::OnComponentRemoved>(this);
 		world->subscribe<SomeEvent>(this);
 	}
 
@@ -108,6 +110,10 @@ public:
 	virtual void receive(class World* world, const Events::OnEntityDestroyed& event) override
 	{
 		std::cout << "An entity was destroyed!" << std::endl;
+	}
+
+	virtual void receive(class World* world, const Events::OnComponentRemoved& event) override
+	{
 	}
 
 	virtual void receive(class World* world, const SomeEvent& event) override
@@ -137,6 +143,8 @@ int main(int argc, char** argv)
 	Entity* ent = world->create();
 	auto pos = ent->assign<Position>(0.f, 0.f);
 	auto rot = ent->assign<Rotation>(0.f);
+
+	ent->remove<Position>();
 
 	std::cout << "Initial values: position(" << pos->x << ", " << pos->y << "), rotation(" << rot->angle << ")" << std::endl;
 
