@@ -74,7 +74,7 @@ ECS_DEFINE_TYPE(SomeEvent);
 class TestSystem : public EntitySystem,
 	public EventSubscriber<Events::OnEntityCreated>,
 	public EventSubscriber<Events::OnEntityDestroyed>,
-	public EventSubscriber<Events::OnComponentRemoved>,
+	public EventSubscriber<Events::OnComponentRemoved<Position>>,
 	public EventSubscriber<SomeEvent>
 {
 public:
@@ -84,7 +84,7 @@ public:
 	{
 		world->subscribe<Events::OnEntityCreated>(this);
 		world->subscribe<Events::OnEntityDestroyed>(this);
-		world->subscribe<Events::OnComponentRemoved>(this);
+		world->subscribe<Events::OnComponentRemoved<Position>>(this);
 		world->subscribe<SomeEvent>(this);
 	}
 
@@ -112,8 +112,9 @@ public:
 		std::cout << "An entity was destroyed!" << std::endl;
 	}
 
-	virtual void receive(class World* world, const Events::OnComponentRemoved& event) override
+	virtual void receive(class World* world, const Events::OnComponentRemoved<Position>& event) override
 	{
+		std::cout << "A component was removed!" << std::endl;
 	}
 
 	virtual void receive(class World* world, const SomeEvent& event) override
@@ -144,11 +145,12 @@ int main(int argc, char** argv)
 	auto pos = ent->assign<Position>(0.f, 0.f);
 	auto rot = ent->assign<Rotation>(0.f);
 
-	ent->remove<Position>();
-
 	std::cout << "Initial values: position(" << pos->x << ", " << pos->y << "), rotation(" << rot->angle << ")" << std::endl;
 
 	world->tick(10.f);
+
+	ent->remove<Position>();
+	ent->remove<Rotation>();
 
 	std::cout << "After tick(10): position(" << pos->x << ", " << pos->y << "), rotation(" << rot->angle << ")" << std::endl;
 

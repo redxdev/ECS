@@ -729,8 +729,7 @@ namespace ECS
 			auto found = components.find(getTypeIndex<T>());
 			if (found != components.end())
 			{
-
-				auto handle = ComponentHandle<T>(&found->second->data);
+				auto handle = ComponentHandle<T>(&reinterpret_cast<Internal::ComponentContainer<T>*>(found->second)->data);
 				world->emit<Events::OnComponentRemoved<T>>({ this, handle });
 
 				found->second->destroy(world);
