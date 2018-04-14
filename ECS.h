@@ -144,8 +144,13 @@ namespace ECS
 		struct BaseComponentContainer
 		{
 		public:
+			virtual ~BaseComponentContainer() { }
+
 			// This should only ever be called by the entity itself.
 			virtual void destroy(World* world) = 0;
+
+			// This will be called by the entity itself
+			virtual void removed(Entity* ent) = 0;
 		};
 
 		class BaseEventSubscriber
@@ -221,12 +226,12 @@ namespace ECS
 		public:
 			EntityComponentView(const EntityComponentIterator<Types...>& first, const EntityComponentIterator<Types...>& last);
 
-			EntityComponentIterator<Types...> begin()
+			const EntityComponentIterator<Types...>& begin() const
 			{
 				return firstItr;
 			}
 
-			EntityComponentIterator<Types...> end()
+			const EntityComponentIterator<Types...>& end() const
 			{
 				return lastItr;
 			}
@@ -354,6 +359,16 @@ namespace ECS
 		// Called when a component is assigned (not necessarily created).
 		template<typename T>
 		struct OnComponentAssigned
+		{
+			ECS_DECLARE_TYPE;
+
+			Entity* entity;
+			ComponentHandle<T> component;
+		};
+
+		// Called when a component is removed
+		template<typename T>
+		struct OnComponentRemoved
 		{
 			ECS_DECLARE_TYPE;
 
@@ -717,7 +732,9 @@ namespace ECS
 			auto found = components.find(getTypeIndex<T>());
 			if (found != components.end())
 			{
+				found->second->removed(this);
 				found->second->destroy(world);
+
 				components.erase(found);
 
 				return true;
@@ -733,6 +750,7 @@ namespace ECS
 		{
 			for (auto pair : components)
 			{
+				pair.second->removed(this);
 				pair.second->destroy(world);
 			}
 
@@ -854,12 +872,12 @@ namespace ECS
 				}
 			}
 
-			EntityIterator begin()
+			const EntityIterator& begin() const
 			{
 				return firstItr;
 			}
 
-			EntityIterator end()
+			const EntityIterator& end() const
 			{
 				return lastItr;
 			}
@@ -885,6 +903,12 @@ namespace ECS
 				ComponentAllocator alloc(world->getPrimaryAllocator());
 				std::allocator_traits<ComponentAllocator>::destroy(alloc, this);
 				std::allocator_traits<ComponentAllocator>::deallocate(alloc, this, 1);
+			}
+
+			virtual void removed(Entity* ent)
+			{
+				auto handle = ComponentHandle<T>(&data);
+				ent->getWorld()->emit<Events::OnComponentRemoved<T>>({ ent, handle });
 			}
 		};
 	}
@@ -1052,10 +1076,8 @@ namespace ECS
 		{
 			return ComponentHandle<T>(&reinterpret_cast<Internal::ComponentContainer<T>*>(found->second)->data);
 		}
-		else
-		{
-			return ComponentHandle<T>(nullptr);
-		}
+	
+		return ComponentHandle<T>();
 	}
 
 	namespace Internal
