@@ -230,8 +230,7 @@ There are a handful of built-in events. Here is the list:
   * `OnEntityCreated` - called when an entity has been created.
   * `OnEntityDestroyed` - called when an entity is being destroyed (including when a world is beind deleted).
   * `OnComponentAssigned` - called when a component is assigned to an entity. This might mean the component is new to the entity, or there's just a new assignment of the component to that entity overwriting an old one.
-
-There is no `OnComponentRemoved` event as of this time.
+  * `OnComponentRemoved` - called when a component is removed from an entity. This happens upon manual removal (via `Entity::remove()` and `Entity::removeAll()`) or upon entity destruction (which can also happen as a result of the world being destroyed).
 
 ## Avoiding RTTI
 
