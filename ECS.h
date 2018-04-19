@@ -379,6 +379,8 @@ namespace ECS
 #ifdef ECS_NO_RTTI
 		template<typename T>
 		ECS_DEFINE_TYPE(ECS::Events::OnComponentAssigned<T>);
+		template<typename T>
+		ECS_DEFINE_TYPE(ECS::Events::OnComponentRemoved<T>);
 #endif
 	}
 
