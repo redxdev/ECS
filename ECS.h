@@ -676,7 +676,7 @@ namespace ECS
 
 		std::vector<Entity*, EntityPtrAllocator> entities;
 		std::vector<EntitySystem*, SystemPtrAllocator> systems;
-        std::vector<EntitySystem*> disabledSystems;
+        	std::vector<EntitySystem*> disabledSystems;
 		std::unordered_map<TypeIndex,
 			std::vector<Internal::BaseEventSubscriber*, SubscriberPtrAllocator>,
 			std::hash<TypeIndex>,
