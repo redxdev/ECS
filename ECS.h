@@ -489,10 +489,12 @@ namespace ECS
 		/**
 		* Register a system. The world will manage the memory of the system unless you unregister the system.
 		*/
-		void registerSystem(EntitySystem* system)
+		EntitySystem* registerSystem(EntitySystem* system)
 		{
 			systems.push_back(system);
 			system->configure(this);
+
+            		return system;
 		}
 
 		/**
@@ -502,6 +504,26 @@ namespace ECS
 		{
 			systems.erase(std::remove(systems.begin(), systems.end(), system), systems.end());
 			system->unconfigure(this);
+		}
+
+		void enableSystem(EntitySystem* system)
+		{
+			auto it = std::find(disabledSystems.begin(), disabledSystems.end(), system);
+			if (it != disabledSystems.end())
+			{
+				disabledSystems.erase(it);
+				systems.push_back(system);
+			}
+		}
+
+		void disableSystem(EntitySystem* system)
+		{
+			auto it = std::find(systems.begin(), systems.end(), system);
+			if (it != systems.end())
+			{
+				systems.erase(it);
+				disabledSystems.push_back(system);
+			}
 		}
 
 		/**
@@ -654,6 +676,7 @@ namespace ECS
 
 		std::vector<Entity*, EntityPtrAllocator> entities;
 		std::vector<EntitySystem*, SystemPtrAllocator> systems;
+        	std::vector<EntitySystem*> disabledSystems;
 		std::unordered_map<TypeIndex,
 			std::vector<Internal::BaseEventSubscriber*, SubscriberPtrAllocator>,
 			std::hash<TypeIndex>,

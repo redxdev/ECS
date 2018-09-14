@@ -146,7 +146,7 @@ int main(int argc, char** argv)
 
 	World* world = World::createWorld();
 
-	world->registerSystem(new TestSystem());
+	EntitySystem* testSystem = world->registerSystem(new TestSystem());
 
 	Entity* ent = world->create();
 	auto pos = ent->assign<Position>(0.f, 0.f);
@@ -157,6 +157,18 @@ int main(int argc, char** argv)
 	world->tick(10.f);
 
 	std::cout << "After tick(10): position(" << pos->x << ", " << pos->y << "), rotation(" << rot->angle << ")" << std::endl;
+
+	world->disableSystem(testSystem);
+
+	world->tick(10.f);
+
+	std::cout << "After tick(10) and DisableSystem(testSystem): position(" << pos->x << ", " << pos->y << "), rotation(" << rot->angle << ")" << std::endl;
+
+	world->enableSystem(testSystem);
+
+	world->tick(10.f);
+
+	std::cout << "After tick(10) and EnableSystem(testSystem): position(" << pos->x << ", " << pos->y << "), rotation(" << rot->angle << ")" << std::endl;
 
 	ent->remove<Position>();
 	ent->remove<Rotation>();
