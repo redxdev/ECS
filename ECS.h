@@ -493,8 +493,8 @@ namespace ECS
 		{
 			systems.push_back(system);
 			system->configure(this);
-
-            return system;
+			
+            		return system;
 		}
 
 		/**
@@ -506,25 +506,25 @@ namespace ECS
 			system->unconfigure(this);
 		}
 
-        void enableSystem(EntitySystem* system)
-        {
-            auto it = std::find(disabledSystems.begin(), disabledSystems.end(), system);
-            if (it != disabledSystems.end())
-            {
-                disabledSystems.erase(it);
-                systems.push_back(system);
-            }
-        }
+		void enableSystem(EntitySystem* system)
+		{
+		auto it = std::find(disabledSystems.begin(), disabledSystems.end(), system);
+		if (it != disabledSystems.end())
+		{
+			disabledSystems.erase(it);
+			systems.push_back(system);
+		}
+		}
 
-        void disableSystem(EntitySystem* system)
-        {
-            auto it = std::find(systems.begin(), systems.end(), system);
-            if (it != systems.end())
-            {
-                systems.erase(it);
-                disabledSystems.push_back(system);
-            }
-        }
+		void disableSystem(EntitySystem* system)
+		{
+		auto it = std::find(systems.begin(), systems.end(), system);
+		if (it != systems.end())
+		{
+			systems.erase(it);
+			disabledSystems.push_back(system);
+		}
+		}
 
 		/**
 		* Subscribe to an event.
