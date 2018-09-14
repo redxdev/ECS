@@ -267,3 +267,8 @@ __pycache__/
 # Cake - Uncomment if you are using it
 # tools/
 
+# executables
+*.exe
+
+# vs code settings and cache folder
+.vscode
