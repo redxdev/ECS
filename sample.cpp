@@ -158,17 +158,17 @@ int main(int argc, char** argv)
 
 	std::cout << "After tick(10): position(" << pos->x << ", " << pos->y << "), rotation(" << rot->angle << ")" << std::endl;
 
-    world->disableSystem(testSystem);
+	world->disableSystem(testSystem);
 
-    world->tick(10.f);
+	world->tick(10.f);
 
-    std::cout << "After tick(10) and DisableSystem(testSystem): position(" << pos->x << ", " << pos->y << "), rotation(" << rot->angle << ")" << std::endl;
+	std::cout << "After tick(10) and DisableSystem(testSystem): position(" << pos->x << ", " << pos->y << "), rotation(" << rot->angle << ")" << std::endl;
 
-    world->enableSystem(testSystem);
+	world->enableSystem(testSystem);
 
-    world->tick(10.f);
+	world->tick(10.f);
 
-    std::cout << "After tick(10) and EnableSystem(testSystem): position(" << pos->x << ", " << pos->y << "), rotation(" << rot->angle << ")" << std::endl;
+	std::cout << "After tick(10) and EnableSystem(testSystem): position(" << pos->x << ", " << pos->y << "), rotation(" << rot->angle << ")" << std::endl;
 
 	ent->remove<Position>();
 	ent->remove<Rotation>();
