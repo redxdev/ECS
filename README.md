@@ -181,7 +181,7 @@ type of object, and you can subscribe to specific types of events by subclassing
     public:
         virtual ~MyEventSubscriber() {}
         
-        virtual void receive(const MyEvent& event) override
+        virtual void receive(World* world, const MyEvent& event) override
         {
             std::cout << "MyEvent was emitted!" << std::endl;
         }
