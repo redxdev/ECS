@@ -940,6 +940,11 @@ namespace ECS
 
 	inline World::~World()
 	{
+		for (auto* system : systems)
+		{
+			system->unconfigure(this);
+		}
+
 		for (auto* ent : entities)
 		{
 			if (!ent->isPendingDestroy())
@@ -954,7 +959,6 @@ namespace ECS
 
 		for (auto* system : systems)
 		{
-			system->unconfigure(this);
 			std::allocator_traits<SystemAllocator>::destroy(systemAlloc, system);
 			std::allocator_traits<SystemAllocator>::deallocate(systemAlloc, system, 1);
 		}
