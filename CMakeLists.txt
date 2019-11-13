@@ -3,7 +3,7 @@ project(ecs VERSION 1.0.0 LANGUAGES CXX)
 
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -16,7 +16,7 @@ if (ECS_SAMPLE_BUILD)
     add_executable(sample sample.cpp)
     target_include_directories(sample PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-    target_compile_features(sample PUBLIC cxx_std_17)
+    target_compile_features(sample PUBLIC cxx_std_11)
     set_target_properties(sample PROPERTIES CXX_EXTENSIONS OFF)
 
     set(targets_to_tidy "${targets_to_tidy}" sample)
