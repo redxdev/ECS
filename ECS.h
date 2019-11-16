@@ -384,6 +384,144 @@ namespace ECS
 #endif
 	}
 
+
+	/**
+	* A container for components. Entities do not have any logic of their own, except of that which to manage
+	* components. Components themselves are generally structs that contain data with which EntitySystems can
+	* act upon, but technically any data type may be used as a component, though only one of each data type
+	* may be on a single Entity at a time.
+	*/
+	class Entity
+	{
+	public:
+		friend class World;
+
+		const static size_t InvalidEntityId = 0;
+
+		// Do not create entities yourself, use World::create().
+		Entity(World* world, size_t id)
+			: world(world), id(id)
+		{
+		}
+
+		// Do not delete entities yourself, use World::destroy().
+		~Entity()
+		{
+			removeAll();
+		}
+
+		/**
+		* Get the world associated with this entity.
+		*/
+		World* getWorld() const
+		{
+			return world;
+		}
+
+		/**
+		* Does this entity have a component?
+		*/
+		template<typename T>
+		bool has() const
+		{
+			auto index = getTypeIndex<T>();
+			return components.find(index) != components.end();
+		}
+
+		/**
+		* Does this entity have this list of components? The order of components does not matter.
+		*/
+		template<typename T, typename V, typename... Types>
+		bool has() const
+		{
+			return has<T>() && has<V, Types...>();
+		}
+
+		/**
+		* Assign a new component (or replace an old one). All components must have a default constructor, though they
+		* may have additional constructors. You may pass arguments to this function the same way you would to a constructor.
+		*
+		* It is recommended that components be simple types (not const, not references, not pointers). If you need to store
+		* any of the above, wrap it in a struct.
+		*/
+		template<typename T, typename... Args>
+		ComponentHandle<T> assign(Args&&... args);
+
+		/**
+		* Remove a component of a specific type. Returns whether a component was removed.
+		*/
+		template<typename T>
+		bool remove()
+		{
+			auto found = components.find(getTypeIndex<T>());
+			if (found != components.end())
+			{
+				found->second->removed(this);
+				found->second->destroy(world);
+
+				components.erase(found);
+
+				return true;
+			}
+
+			return false;
+		}
+
+		/**
+		* Remove all components from this entity.
+		*/
+		void removeAll()
+		{
+			for (auto pair : components)
+			{
+				pair.second->removed(this);
+				pair.second->destroy(world);
+			}
+
+			components.clear();
+		}
+
+		/**
+		* Get a component from this entity.
+		*/
+		template<typename T>
+		ComponentHandle<T> get();
+
+		/**
+		* Call a function with components from this entity as arguments. This will return true if this entity has
+		* all specified components attached, and false if otherwise.
+		*/
+		template<typename... Types>
+		bool with(typename std::common_type<std::function<void(ComponentHandle<Types>...)>>::type view)
+		{
+			if (!has<Types...>())
+				return false;
+
+			view(get<Types>()...); // variadic template expansion is fun
+			return true;
+		}
+
+		/**
+		* Get this entity's id. Entity ids aren't too useful at the moment, but can be used to tell the difference between entities when debugging.
+		*/
+		size_t getEntityId() const
+		{
+			return id;
+		}
+
+		bool isPendingDestroy() const
+		{
+			return bPendingDestroy;
+		}
+
+	private:
+		std::unordered_map<TypeIndex, Internal::BaseComponentContainer*> components;
+		World* world;
+
+		size_t id;
+		bool bPendingDestroy = false;
+	};
+
 	/**
 	* The world creates, destroys, and manages entities. The lifetime of entities and _registered_ systems are handled by the world
 	* (don't delete a system without unregistering it from the world first!), while event subscribers have their own lifetimes
@@ -684,143 +822,6 @@ namespace ECS
 			SubscriberPairAllocator> subscribers;
 
 		size_t lastEntityId = 0;
-	};
-
-	/**
-	* A container for components. Entities do not have any logic of their own, except of that which to manage
-	* components. Components themselves are generally structs that contain data with which EntitySystems can
-	* act upon, but technically any data type may be used as a component, though only one of each data type
-	* may be on a single Entity at a time.
-	*/
-	class Entity
-	{
-	public:
-		friend class World;
-
-		const static size_t InvalidEntityId = 0;
-
-		// Do not create entities yourself, use World::create().
-		Entity(World* world, size_t id)
-			: world(world), id(id)
-		{
-		}
-
-		// Do not delete entities yourself, use World::destroy().
-		~Entity()
-		{
-			removeAll();
-		}
-
-		/**
-		* Get the world associated with this entity.
-		*/
-		World* getWorld() const
-		{
-			return world;
-		}
-
-		/**
-		* Does this entity have a component?
-		*/
-		template<typename T>
-		bool has() const
-		{
-			auto index = getTypeIndex<T>();
-			return components.find(index) != components.end();
-		}
-
-		/**
-		* Does this entity have this list of components? The order of components does not matter.
-		*/
-		template<typename T, typename V, typename... Types>
-		bool has() const
-		{
-			return has<T>() && has<V, Types...>();
-		}
-
-		/**
-		* Assign a new component (or replace an old one). All components must have a default constructor, though they
-		* may have additional constructors. You may pass arguments to this function the same way you would to a constructor.
-		*
-		* It is recommended that components be simple types (not const, not references, not pointers). If you need to store
-		* any of the above, wrap it in a struct.
-		*/
-		template<typename T, typename... Args>
-		ComponentHandle<T> assign(Args&&... args);
-
-		/**
-		* Remove a component of a specific type. Returns whether a component was removed.
-		*/
-		template<typename T>
-		bool remove()
-		{
-			auto found = components.find(getTypeIndex<T>());
-			if (found != components.end())
-			{
-				found->second->removed(this);
-				found->second->destroy(world);
-
-				components.erase(found);
-
-				return true;
-			}
-
-			return false;
-		}
-
-		/**
-		* Remove all components from this entity.
-		*/
-		void removeAll()
-		{
-			for (auto pair : components)
-			{
-				pair.second->removed(this);
-				pair.second->destroy(world);
-			}
-
-			components.clear();
-		}
-
-		/**
-		* Get a component from this entity.
-		*/
-		template<typename T>
-		ComponentHandle<T> get();
-
-		/**
-		* Call a function with components from this entity as arguments. This will return true if this entity has
-		* all specified components attached, and false if otherwise.
-		*/
-		template<typename... Types>
-		bool with(typename std::common_type<std::function<void(ComponentHandle<Types>...)>>::type view)
-		{
-			if (!has<Types...>())
-				return false;
-
-			view(get<Types>()...); // variadic template expansion is fun
-			return true;
-		}
-
-		/**
-		* Get this entity's id. Entity ids aren't too useful at the moment, but can be used to tell the difference between entities when debugging.
-		*/
-		size_t getEntityId() const
-		{
-			return id;
-		}
-
-		bool isPendingDestroy() const
-		{
-			return bPendingDestroy;
-		}
-
-	private:
-		std::unordered_map<TypeIndex, Internal::BaseComponentContainer*> components;
-		World* world;
-
-		size_t id;
-		bool bPendingDestroy = false;
 	};
 
 	namespace Internal
